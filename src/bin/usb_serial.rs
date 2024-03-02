@@ -3,11 +3,9 @@
 
 use defmt::{panic, *};
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::usb_otg::{Driver, Instance};
 use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
-use embassy_time::Timer;
-use embassy_usb::class::gs_can::{GsCanClass, State};
+use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
 use futures::future::join;
@@ -52,17 +50,17 @@ async fn main(_spawner: Spawner) {
     let driver = Driver::new_fs(p.USB_OTG_HS, Irqs, p.PA12, p.PA11, &mut ep_out_buffer, config);
 
     // Create embassy-usb Config
-    let mut config = embassy_usb::Config::new(0x1d50, 0x606f);
+    let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
     config.manufacturer = Some("Embassy");
-    config.product = Some("GS_CAN example");
+    config.product = Some("USB-serial example");
     config.serial_number = Some("12345678");
 
     // Required for windows compatibility.
     // https://developer.nordicsemi.com/nRF_Connect_SDK/doc/1.9.1/kconfig/CONFIG_CDC_ACM_IAD.html#help
-    config.device_class = 0xff;
-    config.device_sub_class = 0xff;
-    config.device_protocol = 0xff;
-    config.composite_with_iads = false;
+    config.device_class = 0xEF;
+    config.device_sub_class = 0x02;
+    config.device_protocol = 0x01;
+    config.composite_with_iads = true;
 
     // Create embassy-usb DeviceBuilder using the driver and config.
     // It needs some buffers for building the descriptors.
@@ -84,7 +82,7 @@ async fn main(_spawner: Spawner) {
     );
 
     // Create classes on the builder.
-    let mut class = GsCanClass::new(&mut builder, &mut state, 3);
+    let mut class = CdcAcmClass::new(&mut builder, &mut state, 64);
 
     // Build the builder.
     let mut usb = builder.build();
@@ -93,22 +91,37 @@ async fn main(_spawner: Spawner) {
     let usb_fut = usb.run();
 
     // Do stuff with the class!
-
-    info!("Waiting for usb_fut");
-
-    let mut led = Output::new(p.PB14, Level::High, Speed::Low);
-
-    let led_fut = async {
+    let echo_fut = async {
         loop {
-            info!("high");
-            led.set_high();
-            Timer::after_millis(500).await;
-
-            info!("low");
-            led.set_low();
-            Timer::after_millis(500).await;
+            class.wait_connection().await;
+            info!("Connected");
+            let _ = echo(&mut class).await;
+            info!("Disconnected");
         }
     };
 
-    join(led_fut, usb_fut).await;
+    // Run everything concurrently.
+    // If we had made everything `'static` above instead, we could do this using separate tasks instead.
+    join(usb_fut, echo_fut).await;
+}
+
+struct Disconnected {}
+
+impl From<EndpointError> for Disconnected {
+    fn from(val: EndpointError) -> Self {
+        match val {
+            EndpointError::BufferOverflow => panic!("Buffer overflow"),
+            EndpointError::Disabled => Disconnected {},
+        }
+    }
+}
+
+async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) -> Result<(), Disconnected> {
+    let mut buf = [0; 64];
+    loop {
+        let n = class.read_packet(&mut buf).await?;
+        let data = &buf[..n];
+        info!("data: {:x}", data);
+        class.write_packet(data).await?;
+    }
 }
