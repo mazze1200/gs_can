@@ -8,6 +8,7 @@ use core::task::Poll;
 
 use defmt::{debug, info, warn};
 use embassy_sync::waitqueue::WakerRegistration;
+use flagset::{flags, FlagSet};
 use zerocopy_derive::{AsBytes, FromBytes};
 
 use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
@@ -15,10 +16,12 @@ use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointO
 use embassy_usb::types::InterfaceNumber;
 use embassy_usb::{Builder, Handler};
 
-use zerocopy::{AsBytes, Ref};
+use zerocopy::{AsBytes, FromZeroes, Ref};
 use zerocopy_derive::FromZeroes;
 
 use zerocopy::byteorder::little_endian::{U32, U64};
+
+use enumflags2::{bitflags, make_bitflags, BitFlags};
 
 /// This should be used as `device_class` when building the `UsbDevice`.
 pub const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
@@ -54,11 +57,67 @@ const GS_USB_BREQ_GET_STATE: u8 = 14;
 
 const NUM_CAN_CHANNEL: u8 = 3;
 
+/**
+#define GS_CAN_MODE_NORMAL 0
+#define GS_CAN_MODE_LISTEN_ONLY BIT(0)
+#define GS_CAN_MODE_LOOP_BACK BIT(1)
+#define GS_CAN_MODE_TRIPLE_SAMPLE BIT(2)
+#define GS_CAN_MODE_ONE_SHOT BIT(3)
+#define GS_CAN_MODE_HW_TIMESTAMP BIT(4)
+#define GS_CAN_MODE_PAD_PKTS_TO_MAX_PKT_SIZE BIT(7)
+#define GS_CAN_MODE_FD BIT(8)
+#define GS_CAN_MODE_BERR_REPORTING BIT(12)
+ */
+
+flags! {
+    #[repr(u32)]
+    enum GsDeviceModeFlag: u32 {
+        // #define GS_CAN_MODE_NORMAL 0 /// this is not possible to outline
+        GS_CAN_MODE_LISTEN_ONLY = 1<<0,
+        GS_CAN_MODE_LOOP_BACK = 1<<1,
+        GS_CAN_MODE_TRIPLE_SAMPLE = 1<<2,
+        GS_CAN_MODE_ONE_SHOT = 1<<3,
+        GS_CAN_MODE_HW_TIMESTAMP = 1<<4,
+        GS_CAN_MODE_PAD_PKTS_TO_MAX_PKT_SIZE = 1<<7,
+        GS_CAN_MODE_FD = 1<<8,
+        GS_CAN_MODE_BERR_REPORTING = 1<<12
+    }
+}
+
+struct GsDeviceModeFlags(FlagSet<GsDeviceModeFlag>);
+
+impl GsDeviceModeFlags {
+    fn new(flags: impl Into<FlagSet<GsDeviceModeFlag>>) -> GsDeviceModeFlags {
+        GsDeviceModeFlags(flags.into())
+    }
+}
+
+impl Into<U32> for GsDeviceModeFlags {
+    fn into(self) -> U32 {
+        self.0.bits().into()
+    }
+}
+
+impl From<U32> for GsDeviceModeFlags {
+    fn from(value: U32) -> Self {
+        GsDeviceModeFlags(FlagSet::<GsDeviceModeFlag>::new_truncated(value.into()))
+    }
+}
+
 #[derive(FromZeroes, FromBytes, AsBytes)]
 #[repr(C, packed)]
 struct GsDeviceMode {
     mode: U32,
     flags: U32,
+}
+
+impl GsDeviceMode {
+    fn get_flags(&self) -> GsDeviceModeFlags {
+        self.flags.into()
+    }
+    fn set_flags(&mut self, flags: GsDeviceModeFlags) {
+        self.flags.set(flags.0.bits());
+    }
 }
 
 #[derive(FromZeroes, FromBytes, AsBytes)]
@@ -174,14 +233,24 @@ impl<'a> State<'a> {
     }
 }
 
-#[derive(FromZeroes, FromBytes, AsBytes)]
+#[derive(AsBytes, FromZeroes)]
+#[repr(u8)]
+enum GsHostFrameFlags {
+    A,         // 0
+    B = 5,     // 5
+    C,         // 6
+    D = 1 + 1, // 2
+    E,         // 3
+}
+
+#[derive(AsBytes, FromZeroes)]
 #[repr(C, packed)]
 struct GsHostFrame {
     echo_id: U32,
     can_id: U32,
     can_dlc: u8,
     channel: u8,
-    flags: u8,
+    flags: GsHostFrameFlags,
     reserved: u8,
     data: [u8; 64],
     timestamp: U64,
@@ -259,7 +328,11 @@ impl<'d> Handler for Control<'d> {
 
     fn control_out(&mut self, req: control::Request, data: &[u8]) -> Option<OutResponse> {
         if (req.request_type, req.recipient, req.index)
-            != (RequestType::Vendor, Recipient::Interface, self.comm_if.0 as u16)
+            != (
+                RequestType::Vendor,
+                Recipient::Interface,
+                self.comm_if.0 as u16,
+            )
         {
             warn!(
                 "Received control_out ({:?}, {:?}, {:?})",
@@ -273,7 +346,10 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsHostConfig>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((host_config, _)) => {
-                        info!("Received Host Config: {:#010x}", host_config.byte_order.get());
+                        info!(
+                            "Received Host Config: {:#010x}",
+                            host_config.byte_order.get()
+                        );
                         Some(OutResponse::Accepted)
                     }
                     None => {
@@ -285,7 +361,10 @@ impl<'d> Handler for Control<'d> {
             GS_USB_BREQ_MODE => {
                 let data: Option<(Ref<_, GsDeviceMode>, _)> = Ref::new_from_prefix(data);
                 match data {
-                    Some((_mode, _)) => Some(OutResponse::Accepted),
+                    Some((mode, _)) => {
+                        let flags = mode.get_flags();
+                        Some(OutResponse::Accepted)
+                    }
                     None => {
                         warn!("unaligned buffer for: GS_USB_BREQ_MODE");
                         Some(OutResponse::Rejected)
@@ -323,7 +402,8 @@ impl<'d> Handler for Control<'d> {
                 }
             }
             GS_USB_BREQ_SET_TERMINATION => {
-                let data: Option<(Ref<_, GsDeviceTerminationState>, _)> = Ref::new_from_prefix(data);
+                let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
+                    Ref::new_from_prefix(data);
                 match data {
                     Some((_termination_state, _)) => Some(OutResponse::Accepted),
                     None => {
@@ -341,7 +421,11 @@ impl<'d> Handler for Control<'d> {
 
     fn control_in<'a>(&'a mut self, req: Request, buf: &'a mut [u8]) -> Option<InResponse<'a>> {
         if (req.request_type, req.recipient, req.index)
-            != (RequestType::Vendor, Recipient::Interface, self.comm_if.0 as u16)
+            != (
+                RequestType::Vendor,
+                Recipient::Interface,
+                self.comm_if.0 as u16,
+            )
         {
             debug!(
                 "Received control_in ({:?}, {:?}, {:?})",
@@ -403,7 +487,8 @@ impl<'d> Handler for Control<'d> {
                 }
             }
             GS_USB_BREQ_GET_TERMINATION => {
-                let data: Option<(Ref<_, GsDeviceTerminationState>, _)> = Ref::new_from_prefix(&mut *buf);
+                let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
+                    Ref::new_from_prefix(&mut *buf);
 
                 match data {
                     Some((mut terminaton_state, _)) => {
@@ -432,7 +517,8 @@ impl<'d> Handler for Control<'d> {
                 }
             }
             GS_USB_BREQ_BT_CONST_EXT => {
-                let data: Option<(Ref<_, GsDeviceBtConstExtended>, _)> = Ref::new_from_prefix(&mut *buf);
+                let data: Option<(Ref<_, GsDeviceBtConstExtended>, _)> =
+                    Ref::new_from_prefix(&mut *buf);
 
                 match data {
                     Some((mut bt_const_ext, _)) => {
@@ -457,15 +543,25 @@ impl<'d> Handler for Control<'d> {
 impl<'d, D: Driver<'d>> GsCanClass<'d, D> {
     /// Creates a new CdcAcmClass with the provided UsbBus and `max_packet_size` in bytes. For
     /// full-speed devices, `max_packet_size` has to be one of 8, 16, 32 or 64.
-    pub fn new(builder: &mut Builder<'d, D>, state: &'d mut State<'d>, num_can_devices: u8) -> Self {
+    pub fn new(
+        builder: &mut Builder<'d, D>,
+        state: &'d mut State<'d>,
+        num_can_devices: u8,
+    ) -> Self {
         assert!(builder.control_buf_len() >= 7);
 
-        let mut func = builder.function(USB_CLASS_GS_CAN, GS_CAN_SUBCLASS_ACM, GS_CAN_PROTOCOL_NONE);
+        let mut func =
+            builder.function(USB_CLASS_GS_CAN, GS_CAN_SUBCLASS_ACM, GS_CAN_PROTOCOL_NONE);
 
         // Control interface
         let mut iface = func.interface();
         let comm_if = iface.interface_number();
-        let mut alt = iface.alt_setting(USB_CLASS_GS_CAN, GS_CAN_SUBCLASS_ACM, GS_CAN_PROTOCOL_NONE, None);
+        let mut alt = iface.alt_setting(
+            USB_CLASS_GS_CAN,
+            GS_CAN_SUBCLASS_ACM,
+            GS_CAN_PROTOCOL_NONE,
+            None,
+        );
 
         let comm_ep = alt.endpoint_interrupt_in(64, 255);
 
@@ -542,7 +638,9 @@ impl<'d, D: Driver<'d>> GsCanClass<'d, D> {
                 read_ep: self.read_ep,
                 control: self.control,
             },
-            ControlChanged { control: self.control },
+            ControlChanged {
+                control: self.control,
+            },
         )
     }
 }
