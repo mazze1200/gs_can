@@ -35,6 +35,9 @@ embedded-storage = "0.3.1"
 static_cell = "2"
 chrono = { version = "^0.4", default-features = false }
 
+zerocopy = "0.7.32"
+zerocopy-derive = "0.7.32"
+
 # cargo build/run
 [profile.dev]
 codegen-units = 1
