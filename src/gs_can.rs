@@ -6,13 +6,14 @@ use core::mem::{self, MaybeUninit};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::Poll;
 
+use defmt::{debug, info, warn};
 use embassy_sync::waitqueue::WakerRegistration;
 use zerocopy_derive::{AsBytes, FromBytes};
 
-use crate::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
-use crate::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointOut};
-use crate::types::InterfaceNumber;
-use crate::{Builder, Handler};
+use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
+use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointOut};
+use embassy_usb::types::InterfaceNumber;
+use embassy_usb::{Builder, Handler};
 
 use zerocopy::{AsBytes, Ref};
 use zerocopy_derive::FromZeroes;
