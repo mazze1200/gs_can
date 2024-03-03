@@ -15,7 +15,7 @@ use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
 use futures::future::join;
 
-use crate::gs_can::{GsCanClass, State};
+use crate::gs_can::{GsCanClass, GsCanHandlers, State};
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -112,8 +112,13 @@ async fn main(_spawner: Spawner) {
         &mut control_buf,
     );
 
+    let gs_can_handlers = GsCanHandlers{
+        get_timestamp : || embassy_time::Instant::now(),
+        // set_bittiming: || {}
+    };
+
     // Create classes on the builder.
-    let mut class = GsCanClass::new(&mut builder, &mut state, 3);
+    let mut class = GsCanClass::new(&mut builder, &mut state, 3, gs_can_handlers);
 
     // Build the builder.
     let mut usb = builder.build();
@@ -131,6 +136,7 @@ async fn main(_spawner: Spawner) {
     can0.set_fd_data_bitrate(4_000_000, true);
 
     let mut can = can0.into_internal_loopback_mode();
+    let can_split0  = can.split();
     // let mut can = can0.into_normal_mode();
 
     info!("CAN Configured");

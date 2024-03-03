@@ -30,8 +30,6 @@ const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
 const GS_CAN_SUBCLASS_ACM: u8 = 0xff; // vendor specific
 const GS_CAN_PROTOCOL_NONE: u8 = 0xff; // vendor specific
 
-
-
 // const NUM_CAN_CHANNEL: u8 = 3;
 
 // const GS_USB_BREQ_HOST_FORMAT: u8 = 0;
@@ -353,7 +351,7 @@ pub struct GsCanClass<'d, D: Driver<'d>> {
 struct Control<'a> {
     comm_if: InterfaceNumber,
     shared: &'a ControlShared,
-
+    can_handlers: GsCanHandlers,
     num_can_channels: u8,
 }
 
@@ -392,6 +390,14 @@ impl<'a> Control<'a> {
         self.shared
     }
 }
+
+
+
+pub struct GsCanHandlers {
+    pub get_timestamp: fn() -> embassy_time::Instant,
+    // pub set_bittiming: fn(timing: GsDeviceBittiming)
+}
+
 
 impl<'d> Handler for Control<'d> {
     fn reset(&mut self) {
@@ -437,7 +443,15 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceMode>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((mode, _)) => {
-                        let flags = mode.get_flags();
+                        match mode.get_mode() {
+                            Some(GsDeviceModeMode::GsCanModeReset) => info!("todo!"),
+                            Some(GsDeviceModeMode::GsCanModeStart) => match mode.get_flags() {
+                                Ok(flags) => info!("todo!"),
+                                Err(_) => info!("todo!"),
+                            },
+                            None => info!("todo!"),
+                        }
+
                         Some(OutResponse::Accepted)
                     }
                     None => {
@@ -541,8 +555,12 @@ impl<'d> Handler for Control<'d> {
 
                 match data {
                     Some((mut timestamp, _)) => {
-                        timestamp.timestamp.set(0);
-                        Some(InResponse::Accepted(timestamp.into_ref().as_bytes()))
+                        let ts = (self.can_handlers.get_timestamp)();
+
+                        timestamp.timestamp.set(ts.as_micros() as u32);
+                        // Some(InResponse::Accepted(timestamp.into_ref().as_bytes()))
+
+                        Some(InResponse::Accepted(buf))
                     }
                     None => {
                         info!("unaligned buffer for: GS_USB_BREQ_TIMESTAMP");
@@ -629,6 +647,7 @@ impl<'d, D: Driver<'d>> GsCanClass<'d, D> {
         builder: &mut Builder<'d, D>,
         state: &'d mut State<'d>,
         num_can_devices: u8,
+        can_handlers: GsCanHandlers,
     ) -> Self {
         assert!(builder.control_buf_len() >= 7);
 
@@ -655,6 +674,7 @@ impl<'d, D: Driver<'d>> GsCanClass<'d, D> {
         let control = state.control.write(Control {
             shared: &state.shared,
             comm_if,
+            can_handlers,
             num_can_channels: num_can_devices,
         });
         builder.handler(control);
