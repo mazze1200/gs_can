@@ -26,15 +26,11 @@ use zerocopy::byteorder::little_endian::{U32, U64};
 use enumflags2::{bitflags, make_bitflags, BitFlags};
 
 /// This should be used as `device_class` when building the `UsbDevice`.
-pub const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
-
+const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
 const GS_CAN_SUBCLASS_ACM: u8 = 0xff; // vendor specific
 const GS_CAN_PROTOCOL_NONE: u8 = 0xff; // vendor specific
 
-const CS_INTERFACE: u8 = 0x24;
-const GS_CAN_TYPE_HEADER: u8 = 0x00;
-const GS_CAN_TYPE_ACM: u8 = 0x02;
-const GS_CAN_TYPE_UNION: u8 = 0x06;
+
 
 // const NUM_CAN_CHANNEL: u8 = 3;
 
@@ -279,14 +275,34 @@ impl<'a> State<'a> {
     }
 }
 
-#[derive(AsBytes, FromZeroes)]
-#[repr(u8)]
-enum GsHostFrameFlags {
-    A,         // 0
-    B = 5,     // 5
-    C,         // 6
-    D = 1 + 1, // 2
-    E,         // 3
+flags! {
+    #[repr(u8)]
+    enum GsHostFrameFlag: u8 {
+        GsCanFlagOverflow = 1<<0,
+        GsCanFlagFd = 1<<1,
+        GsCanFlagBrs =1<<2,
+        GsCanFlagEsi = 1<<3
+    }
+}
+
+struct GsHostFrameFlags(FlagSet<GsHostFrameFlag>);
+
+impl GsHostFrameFlags {
+    fn new(flags: impl Into<FlagSet<GsHostFrameFlag>>) -> GsHostFrameFlags {
+        GsHostFrameFlags(flags.into())
+    }
+}
+
+impl Into<u8> for GsHostFrameFlags {
+    fn into(self) -> u8 {
+        self.0.bits().into()
+    }
+}
+
+impl From<u8> for GsHostFrameFlags {
+    fn from(value: u8) -> Self {
+        GsHostFrameFlags(FlagSet::<GsHostFrameFlag>::new_truncated(value))
+    }
 }
 
 #[derive(AsBytes, FromZeroes)]
@@ -296,10 +312,23 @@ struct GsHostFrame {
     can_id: U32,
     can_dlc: u8,
     channel: u8,
-    flags: GsHostFrameFlags,
+    flags: u8,
     reserved: u8,
     data: [u8; 64],
     timestamp: U64,
+}
+
+impl GsHostFrame {
+    fn get_flags(&self) -> Result<GsHostFrameFlags, InvalidBits> {
+        // self.flags.into()
+        match FlagSet::<GsHostFrameFlag>::new(self.flags.into()) {
+            Ok(flags_set) => Ok(GsHostFrameFlags::new(flags_set)),
+            Err(invalid) => Err(invalid),
+        }
+    }
+    fn set_flags(&mut self, flags: GsHostFrameFlags) {
+        self.flags = flags.0.bits();
+    }
 }
 
 /// Packet level implementation of a CDC-ACM serial port.
