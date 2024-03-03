@@ -175,7 +175,7 @@ struct GsDeviceState {
 
 #[derive(FromZeroes, FromBytes, AsBytes)]
 #[repr(C, packed)]
-struct GsDeviceBittiming {
+pub struct GsDeviceBittiming {
     prop_seg: U32,
     phase_seg1: U32,
     phase_seg2: U32,
@@ -395,7 +395,8 @@ impl<'a> Control<'a> {
 
 pub struct GsCanHandlers {
     pub get_timestamp: fn() -> embassy_time::Instant,
-    // pub set_bittiming: fn(timing: GsDeviceBittiming)
+    pub set_bittiming: fn(channel: u16, timing: Ref<&[u8],GsDeviceBittiming>),
+    pub set_data_bittiming: fn(channel: u16, timing: Ref<&[u8],GsDeviceBittiming>),
 }
 
 
@@ -463,7 +464,9 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
-                    Some((_bit_timing, _)) => Some(OutResponse::Accepted),
+                    Some((bit_timing, _)) => {
+                        (self.can_handlers.set_bittiming)(req.value, bit_timing);
+                        Some(OutResponse::Accepted)},
                     None => {
                         warn!("unaligned buffer for: GS_USB_BREQ_BITTIMING");
                         Some(OutResponse::Rejected)
@@ -473,7 +476,9 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqDataBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
-                    Some((_data_bit_timing, _)) => Some(OutResponse::Accepted),
+                    Some((data_bit_timing, _)) => {
+                        (self.can_handlers.set_data_bittiming)(req.value, data_bit_timing);
+                        Some(OutResponse::Accepted)},
                     None => {
                         warn!("unaligned buffer for: GS_USB_BREQ_DATA_BITTIMING");
                         Some(OutResponse::Rejected)

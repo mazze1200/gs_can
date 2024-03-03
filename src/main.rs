@@ -112,9 +112,10 @@ async fn main(_spawner: Spawner) {
         &mut control_buf,
     );
 
-    let gs_can_handlers = GsCanHandlers{
-        get_timestamp : || embassy_time::Instant::now(),
-        // set_bittiming: || {}
+    let gs_can_handlers = GsCanHandlers {
+        get_timestamp: || embassy_time::Instant::now(),
+        set_bittiming: |channel, timing| {},
+        set_data_bittiming: |channel, timing| {},
     };
 
     // Create classes on the builder.
@@ -136,7 +137,7 @@ async fn main(_spawner: Spawner) {
     can0.set_fd_data_bitrate(4_000_000, true);
 
     let mut can = can0.into_internal_loopback_mode();
-    let can_split0  = can.split();
+    let can_split0 = can.split();
     // let mut can = can0.into_normal_mode();
 
     info!("CAN Configured");
