@@ -269,7 +269,7 @@ impl GsDeviceBtConst {
             Err(invalid) => Err(invalid),
         }
     }
-    pub fn set_features(&mut self, flags: FlagSet::<GsDeviceBtConstFeature>) {
+    pub fn set_features(&mut self, flags: FlagSet<GsDeviceBtConstFeature>) {
         self.feature.set(flags.bits());
     }
 }
@@ -305,7 +305,7 @@ impl GsDeviceBtConstExtended {
             Err(invalid) => Err(invalid),
         }
     }
-    pub fn set_features(&mut self, flags: FlagSet::<GsDeviceBtConstFeature>) {
+    pub fn set_features(&mut self, flags: FlagSet<GsDeviceBtConstFeature>) {
         self.feature.set(flags.bits());
     }
 }
@@ -456,8 +456,8 @@ pub struct GsCanHandlers {
     pub get_timestamp: fn() -> embassy_time::Instant,
     pub set_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
     pub set_data_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
-    pub get_bittiming: fn(channel:u16,  timing: Ref<&mut [u8], GsDeviceBtConst>),
-    pub get_bittiming_extended: fn(channel:u16,  timing: Ref<&mut [u8], GsDeviceBtConstExtended>),
+    pub get_bittiming: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConst>),
+    pub get_bittiming_extended: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConstExtended>),
 }
 
 impl<'d> Handler for Control<'d> {
@@ -644,12 +644,13 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqGetState) => {
                 let data: Option<(Ref<_, GsDeviceState>, _)> = Ref::new_from_prefix(&mut *buf);
 
-                match data {
-                    Some((mut device_state, _)) => {
-                        device_state.rxerr.set(0);
-                        device_state.txerr.set(0);
-                        device_state.state.set(0);
-                        Some(InResponse::Accepted(device_state.into_ref().as_bytes()))
+                match data {                    
+                    Some(( _device_state, _)) => {
+                        todo!("is dependant on the feature GsCanFeatureGetState");
+                        // device_state.rxerr.set(0);
+                        // device_state.txerr.set(0);
+                        // device_state.state.set(0);
+                        // Some(InResponse::Accepted(device_state.into_ref().as_bytes()))
                     }
                     None => {
                         info!("unaligned buffer for: GS_USB_BREQ_GET_STATE");
@@ -660,11 +661,11 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqGetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(&mut *buf);
-
+                
                 match data {
-                    Some((mut terminaton_state, _)) => {
-                        terminaton_state.state.set(0);
-                        Some(InResponse::Accepted(terminaton_state.into_ref().as_bytes()))
+                    Some((_terminaton_state, _)) => {
+                        todo!("is dependant on the feature GsCanFeatureTermination");
+                        Some(InResponse::Accepted(buf))
                     }
                     None => {
                         info!("unaligned buffer for: GS_USB_BREQ_GET_TERMINATION");
