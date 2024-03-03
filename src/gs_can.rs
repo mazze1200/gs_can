@@ -210,9 +210,46 @@ struct GsHostConfig {
     byte_order: U32,
 }
 
+flags! {
+    #[repr(u32)]
+    pub enum GsDeviceBtConstFeature: u32 {
+        GsCanFeatureListenOnly =1<<0,
+        GsCanFeatureLoopBack =1<<1,
+        GsCanFeatureTripleSample =1<<2,
+        GsCanFeatureOneShot =1<<3,
+        GsCanFeatureHwTimestamp =1<<4,
+        GsCanFeatureIdentify =1<<5,
+        GsCanFeatureFd =1<<8,
+        GsCanFeatureBtConstExt =1<<10,
+        GsCanFeatureTermination =1<<11,
+        GsCanFeatureBerrReporting =1<<12,
+        GsCanFeatureGetState =1<<13,
+    }
+}
+
+struct GsDeviceBtConstFeatures(FlagSet<GsDeviceBtConstFeature>);
+
+impl GsDeviceBtConstFeatures {
+    fn new(flags: impl Into<FlagSet<GsDeviceBtConstFeature>>) -> GsDeviceBtConstFeatures {
+        GsDeviceBtConstFeatures(flags.into())
+    }
+}
+
+impl Into<u32> for GsDeviceBtConstFeatures {
+    fn into(self) -> u32 {
+        self.0.bits().into()
+    }
+}
+
+impl From<u32> for GsDeviceBtConstFeatures {
+    fn from(value: u32) -> Self {
+        GsDeviceBtConstFeatures(FlagSet::<GsDeviceBtConstFeature>::new_truncated(value))
+    }
+}
+
 #[derive(FromZeroes, FromBytes, AsBytes)]
 #[repr(C, packed)]
-struct GsDeviceBtConst {
+pub struct GsDeviceBtConst {
     feature: U32,
     fclk_can: U32,
     tseg1_min: U32,
@@ -225,9 +262,21 @@ struct GsDeviceBtConst {
     brp_inc: U32,
 }
 
+impl GsDeviceBtConst {
+    pub fn get_features(&self) -> Result<GsDeviceBtConstFeatures, InvalidBits> {
+        match FlagSet::<GsDeviceBtConstFeature>::new(self.feature.into()) {
+            Ok(flags_set) => Ok(GsDeviceBtConstFeatures::new(flags_set)),
+            Err(invalid) => Err(invalid),
+        }
+    }
+    pub fn set_features(&mut self, flags: FlagSet::<GsDeviceBtConstFeature>) {
+        self.feature.set(flags.bits());
+    }
+}
+
 #[derive(FromZeroes, FromBytes, AsBytes)]
 #[repr(C, packed)]
-struct GsDeviceBtConstExtended {
+pub struct GsDeviceBtConstExtended {
     feature: U32,
     fclk_can: U32,
     tseg1_min: U32,
@@ -247,6 +296,18 @@ struct GsDeviceBtConstExtended {
     dbrp_min: U32,
     dbrp_max: U32,
     dbrp_inc: U32,
+}
+
+impl GsDeviceBtConstExtended {
+    pub fn get_features(&self) -> Result<GsDeviceBtConstFeatures, InvalidBits> {
+        match FlagSet::<GsDeviceBtConstFeature>::new(self.feature.into()) {
+            Ok(flags_set) => Ok(GsDeviceBtConstFeatures::new(flags_set)),
+            Err(invalid) => Err(invalid),
+        }
+    }
+    pub fn set_features(&mut self, flags: FlagSet::<GsDeviceBtConstFeature>) {
+        self.feature.set(flags.bits());
+    }
 }
 
 /* Device specific constants */
@@ -278,7 +339,7 @@ flags! {
     enum GsHostFrameFlag: u8 {
         GsCanFlagOverflow = 1<<0,
         GsCanFlagFd = 1<<1,
-        GsCanFlagBrs =1<<2,
+        GsCanFlagBrs = 1<<2,
         GsCanFlagEsi = 1<<3
     }
 }
@@ -391,14 +452,13 @@ impl<'a> Control<'a> {
     }
 }
 
-
-
 pub struct GsCanHandlers {
     pub get_timestamp: fn() -> embassy_time::Instant,
-    pub set_bittiming: fn(channel: u16, timing: Ref<&[u8],GsDeviceBittiming>),
-    pub set_data_bittiming: fn(channel: u16, timing: Ref<&[u8],GsDeviceBittiming>),
+    pub set_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
+    pub set_data_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
+    pub get_bittiming: fn(channel:u16,  timing: Ref<&mut [u8], GsDeviceBtConst>),
+    pub get_bittiming_extended: fn(channel:u16,  timing: Ref<&mut [u8], GsDeviceBtConstExtended>),
 }
-
 
 impl<'d> Handler for Control<'d> {
     fn reset(&mut self) {
@@ -466,7 +526,8 @@ impl<'d> Handler for Control<'d> {
                 match data {
                     Some((bit_timing, _)) => {
                         (self.can_handlers.set_bittiming)(req.value, bit_timing);
-                        Some(OutResponse::Accepted)},
+                        Some(OutResponse::Accepted)
+                    }
                     None => {
                         warn!("unaligned buffer for: GS_USB_BREQ_BITTIMING");
                         Some(OutResponse::Rejected)
@@ -478,7 +539,8 @@ impl<'d> Handler for Control<'d> {
                 match data {
                     Some((data_bit_timing, _)) => {
                         (self.can_handlers.set_data_bittiming)(req.value, data_bit_timing);
-                        Some(OutResponse::Accepted)},
+                        Some(OutResponse::Accepted)
+                    }
                     None => {
                         warn!("unaligned buffer for: GS_USB_BREQ_DATA_BITTIMING");
                         Some(OutResponse::Rejected)
@@ -488,7 +550,10 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqIdentify) => {
                 let data: Option<(Ref<_, GsIdentifyMode>, _)> = Ref::new_from_prefix(data);
                 match data {
-                    Some((_identify_mode, _)) => Some(OutResponse::Accepted),
+                    Some((_identify_mode, _)) => {
+                        info!("todo");
+                        Some(OutResponse::Accepted)
+                    }
                     None => {
                         warn!("unaligned buffer for: GS_USB_BREQ_IDENTIFY");
                         Some(OutResponse::Rejected)
@@ -499,7 +564,10 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(data);
                 match data {
-                    Some((_termination_state, _)) => Some(OutResponse::Accepted),
+                    Some((_termination_state, _)) => {
+                        info!("todo");
+                        Some(OutResponse::Accepted)
+                    }
                     None => {
                         warn!("unaligned buffer for: GS_USB_BREQ_SET_TERMINATION");
                         Some(OutResponse::Rejected)
@@ -608,9 +676,9 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceBtConst>, _)> = Ref::new_from_prefix(&mut *buf);
 
                 match data {
-                    Some((mut bt_const, _)) => {
-                        bt_const.brp_inc.set(0);
-                        Some(InResponse::Accepted(bt_const.into_ref().as_bytes()))
+                    Some((bt_const, _)) => {
+                        (self.can_handlers.get_bittiming)(req.value, bt_const);
+                        Some(InResponse::Accepted(buf))
                     }
                     None => {
                         info!("unaligned buffer for: GS_USB_BREQ_BT_CONST");
@@ -623,9 +691,9 @@ impl<'d> Handler for Control<'d> {
                     Ref::new_from_prefix(&mut *buf);
 
                 match data {
-                    Some((mut bt_const_ext, _)) => {
-                        bt_const_ext.brp_inc.set(0);
-                        Some(InResponse::Accepted(bt_const_ext.into_ref().as_bytes()))
+                    Some((bt_const_ext, _)) => {
+                        (self.can_handlers.get_bittiming_extended)(req.value, bt_const_ext);
+                        Some(InResponse::Accepted(buf))
                     }
                     None => {
                         info!("unaligned buffer for: GS_USB_BREQ_BT_CONST_EXT");

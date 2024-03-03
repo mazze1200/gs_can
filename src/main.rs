@@ -15,7 +15,7 @@ use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
 use futures::future::join;
 
-use crate::gs_can::{GsCanClass, GsCanHandlers, State};
+use crate::gs_can::{GsCanClass, GsCanHandlers, GsDeviceBtConstFeature, State};
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -116,6 +116,19 @@ async fn main(_spawner: Spawner) {
         get_timestamp: || embassy_time::Instant::now(),
         set_bittiming: |channel, timing| {},
         set_data_bittiming: |channel, timing| {},
+        get_bittiming: |channel, mut timing| {
+            timing.set_features(
+                GsDeviceBtConstFeature::GsCanFeatureFd
+                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
+            )
+        },get_bittiming_extended: |channel, mut timing| {
+            timing.set_features(
+                GsDeviceBtConstFeature::GsCanFeatureFd
+                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
+            )
+        },
     };
 
     // Create classes on the builder.
