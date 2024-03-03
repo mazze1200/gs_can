@@ -8,7 +8,9 @@ use core::task::Poll;
 
 use defmt::{debug, info, warn};
 use embassy_sync::waitqueue::WakerRegistration;
-use flagset::{flags, FlagSet};
+use flagset::{flags, FlagSet, InvalidBits};
+use num_derive::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 use zerocopy_derive::{AsBytes, FromBytes};
 
 use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
@@ -34,30 +36,55 @@ const GS_CAN_TYPE_HEADER: u8 = 0x00;
 const GS_CAN_TYPE_ACM: u8 = 0x02;
 const GS_CAN_TYPE_UNION: u8 = 0x06;
 
-const GS_USB_BREQ_HOST_FORMAT: u8 = 0;
-const GS_USB_BREQ_BITTIMING: u8 = 1;
-const GS_USB_BREQ_MODE: u8 = 2;
-#[allow(unused)]
-const GS_USB_BREQ_BERR: u8 = 3;
-const GS_USB_BREQ_BT_CONST: u8 = 4;
-const GS_USB_BREQ_DEVICE_CONFIG: u8 = 5;
-const GS_USB_BREQ_TIMESTAMP: u8 = 6;
-const GS_USB_BREQ_IDENTIFY: u8 = 7;
-#[allow(unused)]
-const GS_USB_BREQ_GET_USER_ID: u8 = 8;
-#[allow(unused)]
-const GS_USB_BREQ_QUIRK_CANTACT_PRO_DATA_BITTIMING: u8 = GS_USB_BREQ_GET_USER_ID;
-#[allow(unused)]
-const GS_USB_BREQ_SET_USER_ID: u8 = 9;
-const GS_USB_BREQ_DATA_BITTIMING: u8 = 10;
-const GS_USB_BREQ_BT_CONST_EXT: u8 = 11;
-const GS_USB_BREQ_SET_TERMINATION: u8 = 12;
-const GS_USB_BREQ_GET_TERMINATION: u8 = 13;
-const GS_USB_BREQ_GET_STATE: u8 = 14;
+// const NUM_CAN_CHANNEL: u8 = 3;
 
-const NUM_CAN_CHANNEL: u8 = 3;
+// const GS_USB_BREQ_HOST_FORMAT: u8 = 0;
+// const GS_USB_BREQ_BITTIMING: u8 = 1;
+// const GS_USB_BREQ_MODE: u8 = 2;
+// #[allow(unused)]
+// const GS_USB_BREQ_BERR: u8 = 3;
+// const GS_USB_BREQ_BT_CONST: u8 = 4;
+// const GS_USB_BREQ_DEVICE_CONFIG: u8 = 5;
+// const GS_USB_BREQ_TIMESTAMP: u8 = 6;
+// const GS_USB_BREQ_IDENTIFY: u8 = 7;
+// #[allow(unused)]
+// const GS_USB_BREQ_GET_USER_ID: u8 = 8;
+// #[allow(unused)]
+// const GS_USB_BREQ_QUIRK_CANTACT_PRO_DATA_BITTIMING: u8 = GS_USB_BREQ_GET_USER_ID;
+// #[allow(unused)]
+// const GS_USB_BREQ_SET_USER_ID: u8 = 9;
+// const GS_USB_BREQ_DATA_BITTIMING: u8 = 10;
+// const GS_USB_BREQ_BT_CONST_EXT: u8 = 11;
+// const GS_USB_BREQ_SET_TERMINATION: u8 = 12;
+// const GS_USB_BREQ_GET_TERMINATION: u8 = 13;
+// const GS_USB_BREQ_GET_STATE: u8 = 14;
 
-/**
+#[derive(FromPrimitive, ToPrimitive, Debug)]
+enum GsUsbRequestType {
+    GsUsbBreqHostFormat = 0,
+    GsUsbBreqBittiming = 1,
+    GsUsbBreqMode = 2,
+    GsUsbBreqBerr = 3,
+    GsUsbBreqBtConst = 4,
+    GsUsbBreqDeviceConfig = 5,
+    GsUsbBreqTimestamp = 6,
+    GsUsbBreqIdentify = 7,
+    GsUsbBreqGetUserId = 8,
+    GsUsbBreqSetUserId = 9,
+    GsUsbBreqDataBittiming = 10,
+    GsUsbBreqBtConstExt = 11,
+    GsUsbBreqSetTermination = 12,
+    GsUsbBreqGetTermination = 13,
+    GsUsbBreqGetState = 14,
+}
+
+/*
+    /* reset a channel. turns it off */
+    GS_CAN_MODE_RESET = 0,
+    /* starts a channel */
+    GS_CAN_MODE_START
+
+
 #define GS_CAN_MODE_NORMAL 0
 #define GS_CAN_MODE_LISTEN_ONLY BIT(0)
 #define GS_CAN_MODE_LOOP_BACK BIT(1)
@@ -72,16 +99,23 @@ const NUM_CAN_CHANNEL: u8 = 3;
 flags! {
     #[repr(u32)]
     enum GsDeviceModeFlag: u32 {
-        // #define GS_CAN_MODE_NORMAL 0 /// this is not possible to outline
-        GS_CAN_MODE_LISTEN_ONLY = 1<<0,
-        GS_CAN_MODE_LOOP_BACK = 1<<1,
-        GS_CAN_MODE_TRIPLE_SAMPLE = 1<<2,
-        GS_CAN_MODE_ONE_SHOT = 1<<3,
-        GS_CAN_MODE_HW_TIMESTAMP = 1<<4,
-        GS_CAN_MODE_PAD_PKTS_TO_MAX_PKT_SIZE = 1<<7,
-        GS_CAN_MODE_FD = 1<<8,
-        GS_CAN_MODE_BERR_REPORTING = 1<<12
+        // #define GS_CAN_MODE_NORMAL = 0 /// this is not possible to outline
+        GsCanModeListenOnly = 1<<0,
+        GsCanModeLoopBack = 1<<1,
+        GsCanModeTripleSample = 1<<2,
+        GsCanModeOneShot = 1<<3,
+        GsCanModeHwTimestamp = 1<<4,
+        GsCanModePadPktsToMaxPktSize = 1<<7,
+        GsCanModeFd = 1<<8,
+        GsCanModeBerrReporting = 1<<12
     }
+}
+
+#[derive(FromPrimitive, ToPrimitive)]
+enum GsDeviceModeMode {
+    // #define GS_CAN_MODE_NORMAL 0 /// this is not possible to outline
+    GsCanModeReset = 0,
+    GsCanModeStart = 1,
 }
 
 struct GsDeviceModeFlags(FlagSet<GsDeviceModeFlag>);
@@ -112,8 +146,20 @@ struct GsDeviceMode {
 }
 
 impl GsDeviceMode {
-    fn get_flags(&self) -> GsDeviceModeFlags {
-        self.flags.into()
+    fn get_mode(&self) -> Option<GsDeviceModeMode> {
+        FromPrimitive::from_u32(self.mode.into())
+    }
+
+    fn set_mode(&mut self, mode: GsDeviceModeMode) {
+        self.mode.set(mode.to_u32().unwrap());
+    }
+
+    fn get_flags(&self) -> Result<GsDeviceModeFlags, InvalidBits> {
+        // self.flags.into()
+        match FlagSet::<GsDeviceModeFlag>::new(self.flags.into()) {
+            Ok(flags_set) => Ok(GsDeviceModeFlags::new(flags_set)),
+            Err(invalid) => Err(invalid),
+        }
     }
     fn set_flags(&mut self, flags: GsDeviceModeFlags) {
         self.flags.set(flags.0.bits());
@@ -341,8 +387,8 @@ impl<'d> Handler for Control<'d> {
             return None;
         }
 
-        match req.request {
-            GS_USB_BREQ_HOST_FORMAT => {
+        match FromPrimitive::from_u8(req.request) {
+            Some(GsUsbRequestType::GsUsbBreqHostFormat) => {
                 let data: Option<(Ref<_, GsHostConfig>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((host_config, _)) => {
@@ -358,7 +404,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_MODE => {
+            Some(GsUsbRequestType::GsUsbBreqMode) => {
                 let data: Option<(Ref<_, GsDeviceMode>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((mode, _)) => {
@@ -371,7 +417,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_BITTIMING => {
+            Some(GsUsbRequestType::GsUsbBreqBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((_bit_timing, _)) => Some(OutResponse::Accepted),
@@ -381,7 +427,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_DATA_BITTIMING => {
+            Some(GsUsbRequestType::GsUsbBreqDataBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((_data_bit_timing, _)) => Some(OutResponse::Accepted),
@@ -391,7 +437,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_IDENTIFY => {
+            Some(GsUsbRequestType::GsUsbBreqIdentify) => {
                 let data: Option<(Ref<_, GsIdentifyMode>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((_identify_mode, _)) => Some(OutResponse::Accepted),
@@ -401,7 +447,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_SET_TERMINATION => {
+            Some(GsUsbRequestType::GsUsbBreqSetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(data);
                 match data {
@@ -412,8 +458,13 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
+
+            Some(_) => {
+                warn!("Unhandled control_out request: {}", req.request);
+                None
+            }
             _ => {
-                info!("Unknown control_out request: {}", req.request);
+                warn!("Unknown control_out request: {}", req.request);
                 None
             }
         }
@@ -434,8 +485,9 @@ impl<'d> Handler for Control<'d> {
             return None;
         }
 
-        match req.request {
-            GS_USB_BREQ_DEVICE_CONFIG => {
+        // match req.request {
+        match FromPrimitive::from_u8(req.request) {
+            Some(GsUsbRequestType::GsUsbBreqDeviceConfig) => {
                 let data: Option<(Ref<_, GsDeviceConfig>, _)> = Ref::new_from_prefix(&mut *buf);
 
                 match data {
@@ -455,7 +507,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_TIMESTAMP => {
+            Some(GsUsbRequestType::GsUsbBreqTimestamp) => {
                 let data: Option<(Ref<_, GsTimestamp>, _)> = Ref::new_from_prefix(&mut *buf);
 
                 match data {
@@ -469,8 +521,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-
-            GS_USB_BREQ_GET_STATE => {
+            Some(GsUsbRequestType::GsUsbBreqGetState) => {
                 let data: Option<(Ref<_, GsDeviceState>, _)> = Ref::new_from_prefix(&mut *buf);
 
                 match data {
@@ -486,7 +537,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_GET_TERMINATION => {
+            Some(GsUsbRequestType::GsUsbBreqGetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(&mut *buf);
 
@@ -501,8 +552,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-
-            GS_USB_BREQ_BT_CONST => {
+            Some(GsUsbRequestType::GsUsbBreqBtConst) => {
                 let data: Option<(Ref<_, GsDeviceBtConst>, _)> = Ref::new_from_prefix(&mut *buf);
 
                 match data {
@@ -516,7 +566,7 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-            GS_USB_BREQ_BT_CONST_EXT => {
+            Some(GsUsbRequestType::GsUsbBreqBtConstExt) => {
                 let data: Option<(Ref<_, GsDeviceBtConstExtended>, _)> =
                     Ref::new_from_prefix(&mut *buf);
 
@@ -531,9 +581,12 @@ impl<'d> Handler for Control<'d> {
                     }
                 }
             }
-
+            Some(_) => {
+                warn!("Unhandled control_in request: {}", req.request);
+                None
+            }
             _ => {
-                info!("Unknown control_in request: {}", req.request);
+                warn!("Unknown control_in request: {}", req.request);
                 None
             }
         }
