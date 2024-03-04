@@ -14,6 +14,7 @@ use embassy_stm32::{can, rcc};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
 use futures::future::join;
+use static_cell::StaticCell;
 
 use crate::gs_can::{GsCanClass, GsCanHandlers, GsDeviceBtConstFeature, State};
 
@@ -30,6 +31,35 @@ bind_interrupts!(struct Irqs {
     FDCAN3_IT0 => can::IT0InterruptHandler<FDCAN3>;
     FDCAN3_IT1 => can::IT1InterruptHandler<FDCAN3>;
 });
+
+static GS_CAN: StaticCell<u32> = StaticCell::new();
+
+
+struct CanHandler{}
+
+impl GsCanHandlers for CanHandler{
+    fn get_timestamp(&self) ->  embassy_time::Instant {
+        embassy_time::Instant::now()
+        }
+
+    fn set_bittiming(&mut self, channel: u16, timing: zerocopy::Ref<&[u8], gs_can::GsDeviceBittiming>) {
+        
+    }
+
+    fn set_data_bittiming (&mut self, channel: u16, timing: zerocopy::Ref<&[u8], gs_can::GsDeviceBittiming>) {
+        
+    }
+
+    fn get_bittiming (&self, channel: u16, timing: zerocopy::Ref<&mut [u8], gs_can::GsDeviceBtConst>) {
+        
+    }
+
+    fn get_bittiming_extended  (&self, channel: u16, timing: zerocopy::Ref<&mut [u8], gs_can::GsDeviceBtConstExtended>) {
+        
+    }
+}
+
+static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -112,27 +142,29 @@ async fn main(_spawner: Spawner) {
         &mut control_buf,
     );
 
-    let gs_can_handlers = GsCanHandlers {
-        get_timestamp: || embassy_time::Instant::now(),
-        set_bittiming: |channel, timing| {},
-        set_data_bittiming: |channel, timing| {},
-        get_bittiming: |channel, mut timing| {
-            timing.set_features(
-                GsDeviceBtConstFeature::GsCanFeatureFd
-                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
-            )
-        },get_bittiming_extended: |channel, mut timing| {
-            timing.set_features(
-                GsDeviceBtConstFeature::GsCanFeatureFd
-                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
-            )
-        },
-    };
+    // let gs_can_handlers = GsCanHandlers {
+    //     get_timestamp: || embassy_time::Instant::now(),
+    //     set_bittiming: |channel, timing| {},
+    //     set_data_bittiming: |channel, timing| {},
+    //     get_bittiming: |channel, mut timing| {
+    //         timing.set_features(
+    //             GsDeviceBtConstFeature::GsCanFeatureFd
+    //                 | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+    //                 | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
+    //         )
+    //     },get_bittiming_extended: |channel, mut timing| {
+    //         timing.set_features(
+    //             GsDeviceBtConstFeature::GsCanFeatureFd
+    //                 | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+    //                 | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
+    //         )
+    //     },
+    // };
+
+    let can_handler = CAN_HANDLER.init(CanHandler{});
 
     // Create classes on the builder.
-    let mut class = GsCanClass::new(&mut builder, &mut state, 3, gs_can_handlers);
+    let mut class = GsCanClass::new(&mut builder, &mut state, 3, can_handler);
 
     // Build the builder.
     let mut usb = builder.build();

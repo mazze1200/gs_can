@@ -412,7 +412,7 @@ pub struct GsCanClass<'d, D: Driver<'d>> {
 struct Control<'a> {
     comm_if: InterfaceNumber,
     shared: &'a ControlShared,
-    can_handlers: GsCanHandlers,
+    can_handlers: &'static mut dyn GsCanHandlers,
     num_can_channels: u8,
 }
 
@@ -452,12 +452,20 @@ impl<'a> Control<'a> {
     }
 }
 
-pub struct GsCanHandlers {
-    pub get_timestamp: fn() -> embassy_time::Instant,
-    pub set_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
-    pub set_data_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
-    pub get_bittiming: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConst>),
-    pub get_bittiming_extended: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConstExtended>),
+// pub struct GsCanHandlers {
+//     pub get_timestamp: fn() -> embassy_time::Instant,
+//     pub set_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
+//     pub set_data_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
+//     pub get_bittiming: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConst>),
+//     pub get_bittiming_extended: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConstExtended>),
+// }
+
+pub trait GsCanHandlers {
+    fn get_timestamp(&self) -> embassy_time::Instant;
+    fn set_bittiming(&mut self, channel: u16, timing: Ref<&[u8], GsDeviceBittiming>);
+    fn set_data_bittiming(&mut self, channel: u16, timing: Ref<&[u8], GsDeviceBittiming>);
+    fn get_bittiming(&self, channel: u16, timing: Ref<&mut [u8], GsDeviceBtConst>);
+    fn get_bittiming_extended(&self, channel: u16, timing: Ref<&mut [u8], GsDeviceBtConstExtended>);
 }
 
 impl<'d> Handler for Control<'d> {
@@ -525,7 +533,7 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((bit_timing, _)) => {
-                        (self.can_handlers.set_bittiming)(req.value, bit_timing);
+                        self.can_handlers.set_bittiming(req.value, bit_timing);
                         Some(OutResponse::Accepted)
                     }
                     None => {
@@ -538,7 +546,7 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((data_bit_timing, _)) => {
-                        (self.can_handlers.set_data_bittiming)(req.value, data_bit_timing);
+                        self.can_handlers.set_data_bittiming(req.value, data_bit_timing);
                         Some(OutResponse::Accepted)
                     }
                     None => {
@@ -628,7 +636,7 @@ impl<'d> Handler for Control<'d> {
 
                 match data {
                     Some((mut timestamp, _)) => {
-                        let ts = (self.can_handlers.get_timestamp)();
+                        let ts = self.can_handlers.get_timestamp();
 
                         timestamp.timestamp.set(ts.as_micros() as u32);
                         // Some(InResponse::Accepted(timestamp.into_ref().as_bytes()))
@@ -644,8 +652,8 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqGetState) => {
                 let data: Option<(Ref<_, GsDeviceState>, _)> = Ref::new_from_prefix(&mut *buf);
 
-                match data {                    
-                    Some(( _device_state, _)) => {
+                match data {
+                    Some((_device_state, _)) => {
                         todo!("is dependant on the feature GsCanFeatureGetState");
                         // device_state.rxerr.set(0);
                         // device_state.txerr.set(0);
@@ -661,7 +669,7 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqGetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(&mut *buf);
-                
+
                 match data {
                     Some((_terminaton_state, _)) => {
                         todo!("is dependant on the feature GsCanFeatureTermination");
@@ -678,7 +686,7 @@ impl<'d> Handler for Control<'d> {
 
                 match data {
                     Some((bt_const, _)) => {
-                        (self.can_handlers.get_bittiming)(req.value, bt_const);
+                    self.can_handlers.get_bittiming(req.value, bt_const);
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
@@ -693,7 +701,7 @@ impl<'d> Handler for Control<'d> {
 
                 match data {
                     Some((bt_const_ext, _)) => {
-                        (self.can_handlers.get_bittiming_extended)(req.value, bt_const_ext);
+                        self.can_handlers.get_bittiming_extended (req.value, bt_const_ext);
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
@@ -714,14 +722,17 @@ impl<'d> Handler for Control<'d> {
     }
 }
 
-impl<'d, D: Driver<'d>> GsCanClass<'d, D> {
+impl<'d, D> GsCanClass<'d, D>
+where
+    D: Driver<'d>,
+{
     /// Creates a new CdcAcmClass with the provided UsbBus and `max_packet_size` in bytes. For
     /// full-speed devices, `max_packet_size` has to be one of 8, 16, 32 or 64.
     pub fn new(
         builder: &mut Builder<'d, D>,
         state: &'d mut State<'d>,
         num_can_devices: u8,
-        can_handlers: GsCanHandlers,
+        can_handlers: &'static mut dyn GsCanHandlers,
     ) -> Self {
         assert!(builder.control_buf_len() >= 7);
 
