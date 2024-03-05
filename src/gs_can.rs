@@ -307,7 +307,7 @@ pub struct GsDeviceBtConstExtended {
     feature: U32,
     pub fclk_can: U32,
     pub tseg1_min: U32,
-    pub     tseg1_max: U32,
+    pub tseg1_max: U32,
     pub tseg2_min: U32,
     pub tseg2_max: U32,
     pub sjw_max: U32,
@@ -315,7 +315,7 @@ pub struct GsDeviceBtConstExtended {
     pub brp_max: U32,
     pub brp_inc: U32,
 
-    pub     dtseg1_min: U32,
+    pub dtseg1_min: U32,
     pub dtseg1_max: U32,
     pub dtseg2_min: U32,
     pub dtseg2_max: U32,
@@ -491,12 +491,8 @@ pub trait GsCanHandlers {
     fn get_timestamp(&self) -> embassy_time::Instant;
     fn set_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming);
     fn set_data_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming);
-    fn get_bittiming(&self, channel: u16, timing: &mut  GsDeviceBtConst);
-    fn get_bittiming_extended(
-        &self,
-        channel: u16,
-        timing: &mut GsDeviceBtConstExtended,
-    );
+    fn get_bittiming(&self, channel: u16, timing: &mut GsDeviceBtConst);
+    fn get_bittiming_extended(&self, channel: u16, timing: &mut GsDeviceBtConstExtended);
 }
 
 impl<'d> Handler for Control<'d> {
@@ -564,8 +560,7 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((bit_timing, _)) => {
-                        self.can_handlers
-                            .set_bittiming(req.value, &bit_timing);
+                        self.can_handlers.set_bittiming(req.value, &bit_timing);
                         Some(OutResponse::Accepted)
                     }
                     None => {
