@@ -50,9 +50,24 @@ impl GsCanHandlers for CanHandler {
     fn set_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming) {
         if let Some(bit_timing) = Into::<Option<can::config::NominalBitTiming>>::into(timing) {
             match channel {
-                0 => self.can_cnt_0.set_bitrate(bit_timing),
-                1 => self.can_cnt_1.set_bitrate(bit_timing),
-                2 => self.can_cnt_2.set_bitrate(bit_timing),
+                0 => {
+                    self.can_cnt_0.into_config_mode();
+                    self.can_cnt_0.set_bitrate(bit_timing);
+                    self.can_cnt_0
+                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                }
+                1 => {
+                    self.can_cnt_1.into_config_mode();
+                    self.can_cnt_1.set_bitrate(bit_timing);
+                    self.can_cnt_1
+                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                }
+                2 => {
+                    self.can_cnt_2.into_config_mode();
+                    self.can_cnt_2.set_bitrate(bit_timing);
+                    self.can_cnt_2
+                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                }
                 _ => {}
             };
         }
@@ -61,9 +76,24 @@ impl GsCanHandlers for CanHandler {
     fn set_data_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming) {
         if let Some(data_bit_timing) = Into::<Option<can::config::DataBitTiming>>::into(timing) {
             match channel {
-                0 => self.can_cnt_0.set_fd_data_bitrate(data_bit_timing),
-                1 => self.can_cnt_1.set_fd_data_bitrate(data_bit_timing),
-                2 => self.can_cnt_2.set_fd_data_bitrate(data_bit_timing),
+                0 => {
+                    self.can_cnt_0.into_config_mode();
+                    self.can_cnt_0.set_fd_data_bitrate(data_bit_timing);
+                    self.can_cnt_0
+                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                }
+                1 => {
+                    self.can_cnt_1.into_config_mode();
+                    self.can_cnt_1.set_fd_data_bitrate(data_bit_timing);
+                    self.can_cnt_1
+                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                }
+                2 => {
+                    self.can_cnt_2.into_config_mode();
+                    self.can_cnt_2.set_fd_data_bitrate(data_bit_timing);
+                    self.can_cnt_2
+                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                }
                 _ => {}
             }
         };
