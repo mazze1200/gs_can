@@ -1,12 +1,15 @@
 //! CDC-ACM class implementation, aka Serial over USB.
 
+use core::borrow::BorrowMut;
 use core::cell::{Cell, RefCell};
 use core::future::poll_fn;
 use core::mem::{self, MaybeUninit};
+use core::num::{NonZeroU16, NonZeroU8};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::Poll;
 
 use defmt::{debug, info, warn};
+use embassy_stm32::can::config::{DataBitTiming, NominalBitTiming};
 use embassy_sync::waitqueue::WakerRegistration;
 use flagset::{flags, FlagSet, InvalidBits};
 use num_derive::{FromPrimitive, ToPrimitive};
@@ -182,6 +185,30 @@ pub struct GsDeviceBittiming {
     sjw: U32,
     brp: U32,
 }
+
+impl Into<Option<NominalBitTiming>> for &GsDeviceBittiming {
+    fn into(self) -> Option<NominalBitTiming> {
+        Some(NominalBitTiming {
+            prescaler: NonZeroU16::new(self.brp.get() as u16)?,
+            seg1: NonZeroU8::new((self.prop_seg.get() + self.phase_seg1.get()) as u8)?,
+            seg2: NonZeroU8::new(self.phase_seg2.get() as u8)?,
+            sync_jump_width: NonZeroU8::new(self.sjw.get() as u8)?,
+        })
+    }
+}
+
+impl Into<Option<DataBitTiming>> for &GsDeviceBittiming {
+    fn into(self) -> Option<DataBitTiming> {
+        Some(DataBitTiming {
+            transceiver_delay_compensation: false,
+            prescaler: NonZeroU16::new(self.brp.get() as u16)?,
+            seg1: NonZeroU8::new((self.prop_seg.get() + self.phase_seg1.get()) as u8)?,
+            seg2: NonZeroU8::new(self.phase_seg2.get() as u8)?,
+            sync_jump_width: NonZeroU8::new(self.sjw.get() as u8)?,
+        })
+    }
+}
+
 #[derive(FromZeroes, FromBytes, AsBytes)]
 #[repr(C, packed)]
 struct GsIdentifyMode {
@@ -227,10 +254,10 @@ flags! {
     }
 }
 
-struct GsDeviceBtConstFeatures(FlagSet<GsDeviceBtConstFeature>);
+pub struct GsDeviceBtConstFeatures(FlagSet<GsDeviceBtConstFeature>);
 
 impl GsDeviceBtConstFeatures {
-    fn new(flags: impl Into<FlagSet<GsDeviceBtConstFeature>>) -> GsDeviceBtConstFeatures {
+    pub fn new(flags: impl Into<FlagSet<GsDeviceBtConstFeature>>) -> GsDeviceBtConstFeatures {
         GsDeviceBtConstFeatures(flags.into())
     }
 }
@@ -251,15 +278,15 @@ impl From<u32> for GsDeviceBtConstFeatures {
 #[repr(C, packed)]
 pub struct GsDeviceBtConst {
     feature: U32,
-    fclk_can: U32,
-    tseg1_min: U32,
-    tseg1_max: U32,
-    tseg2_min: U32,
-    tseg2_max: U32,
-    sjw_max: U32,
-    brp_min: U32,
-    brp_max: U32,
-    brp_inc: U32,
+    pub fclk_can: U32,
+    pub tseg1_min: U32,
+    pub tseg1_max: U32,
+    pub tseg2_min: U32,
+    pub tseg2_max: U32,
+    pub sjw_max: U32,
+    pub brp_min: U32,
+    pub brp_max: U32,
+    pub brp_inc: U32,
 }
 
 impl GsDeviceBtConst {
@@ -278,24 +305,24 @@ impl GsDeviceBtConst {
 #[repr(C, packed)]
 pub struct GsDeviceBtConstExtended {
     feature: U32,
-    fclk_can: U32,
-    tseg1_min: U32,
-    tseg1_max: U32,
-    tseg2_min: U32,
-    tseg2_max: U32,
-    sjw_max: U32,
-    brp_min: U32,
-    brp_max: U32,
-    brp_inc: U32,
+    pub fclk_can: U32,
+    pub tseg1_min: U32,
+    pub     tseg1_max: U32,
+    pub tseg2_min: U32,
+    pub tseg2_max: U32,
+    pub sjw_max: U32,
+    pub brp_min: U32,
+    pub brp_max: U32,
+    pub brp_inc: U32,
 
-    dtseg1_min: U32,
-    dtseg1_max: U32,
-    dtseg2_min: U32,
-    dtseg2_max: U32,
-    dsjw_max: U32,
-    dbrp_min: U32,
-    dbrp_max: U32,
-    dbrp_inc: U32,
+    pub     dtseg1_min: U32,
+    pub dtseg1_max: U32,
+    pub dtseg2_min: U32,
+    pub dtseg2_max: U32,
+    pub dsjw_max: U32,
+    pub dbrp_min: U32,
+    pub dbrp_max: U32,
+    pub dbrp_inc: U32,
 }
 
 impl GsDeviceBtConstExtended {
@@ -412,7 +439,7 @@ pub struct GsCanClass<'d, D: Driver<'d>> {
 struct Control<'a> {
     comm_if: InterfaceNumber,
     shared: &'a ControlShared,
-    can_handlers: &'static mut dyn GsCanHandlers,
+    can_handlers: &'a mut dyn GsCanHandlers,
     num_can_channels: u8,
 }
 
@@ -462,10 +489,14 @@ impl<'a> Control<'a> {
 
 pub trait GsCanHandlers {
     fn get_timestamp(&self) -> embassy_time::Instant;
-    fn set_bittiming(&mut self, channel: u16, timing: Ref<&[u8], GsDeviceBittiming>);
-    fn set_data_bittiming(&mut self, channel: u16, timing: Ref<&[u8], GsDeviceBittiming>);
-    fn get_bittiming(&self, channel: u16, timing: Ref<&mut [u8], GsDeviceBtConst>);
-    fn get_bittiming_extended(&self, channel: u16, timing: Ref<&mut [u8], GsDeviceBtConstExtended>);
+    fn set_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming);
+    fn set_data_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming);
+    fn get_bittiming(&self, channel: u16, timing: &mut  GsDeviceBtConst);
+    fn get_bittiming_extended(
+        &self,
+        channel: u16,
+        timing: &mut GsDeviceBtConstExtended,
+    );
 }
 
 impl<'d> Handler for Control<'d> {
@@ -533,7 +564,8 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((bit_timing, _)) => {
-                        self.can_handlers.set_bittiming(req.value, bit_timing);
+                        self.can_handlers
+                            .set_bittiming(req.value, &bit_timing);
                         Some(OutResponse::Accepted)
                     }
                     None => {
@@ -546,7 +578,8 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
                 match data {
                     Some((data_bit_timing, _)) => {
-                        self.can_handlers.set_data_bittiming(req.value, data_bit_timing);
+                        self.can_handlers
+                            .set_data_bittiming(req.value, &data_bit_timing);
                         Some(OutResponse::Accepted)
                     }
                     None => {
@@ -685,8 +718,8 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceBtConst>, _)> = Ref::new_from_prefix(&mut *buf);
 
                 match data {
-                    Some((bt_const, _)) => {
-                    self.can_handlers.get_bittiming(req.value, bt_const);
+                    Some((mut bt_const, _)) => {
+                        self.can_handlers.get_bittiming(req.value, &mut bt_const);
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
@@ -700,8 +733,9 @@ impl<'d> Handler for Control<'d> {
                     Ref::new_from_prefix(&mut *buf);
 
                 match data {
-                    Some((bt_const_ext, _)) => {
-                        self.can_handlers.get_bittiming_extended (req.value, bt_const_ext);
+                    Some((mut bt_const_ext, _)) => {
+                        self.can_handlers
+                            .get_bittiming_extended(req.value, &mut bt_const_ext);
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
@@ -732,7 +766,7 @@ where
         builder: &mut Builder<'d, D>,
         state: &'d mut State<'d>,
         num_can_devices: u8,
-        can_handlers: &'static mut dyn GsCanHandlers,
+        can_handlers: &'d mut dyn GsCanHandlers,
     ) -> Self {
         assert!(builder.control_buf_len() >= 7);
 

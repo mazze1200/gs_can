@@ -3,6 +3,7 @@
 
 use defmt::{panic, *};
 use embassy_executor::Spawner;
+use embassy_stm32::can::FdcanControl;
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::usb_otg::{Driver, Instance};
@@ -14,7 +15,9 @@ use embassy_stm32::{can, rcc};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
 use futures::future::join;
+use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures};
 use static_cell::StaticCell;
+use zerocopy::Ref;
 
 use crate::gs_can::{GsCanClass, GsCanHandlers, GsDeviceBtConstFeature, State};
 
@@ -32,30 +35,97 @@ bind_interrupts!(struct Irqs {
     FDCAN3_IT1 => can::IT1InterruptHandler<FDCAN3>;
 });
 
-static GS_CAN: StaticCell<u32> = StaticCell::new();
+struct CanHandler {
+    // cans: [FdcanControl; 3]
+    can_cnt_0: FdcanControl<FDCAN1>,
+    can_cnt_1: FdcanControl<FDCAN2>,
+    can_cnt_2: FdcanControl<FDCAN3>,
+}
 
-
-struct CanHandler{}
-
-impl GsCanHandlers for CanHandler{
-    fn get_timestamp(&self) ->  embassy_time::Instant {
+impl GsCanHandlers for CanHandler {
+    fn get_timestamp(&self) -> embassy_time::Instant {
         embassy_time::Instant::now()
+    }
+
+    fn set_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming) {
+        if let Some(bit_timing) = Into::<Option<can::config::NominalBitTiming>>::into(timing) {
+            match channel {
+                0 => self.can_cnt_0.set_bitrate(bit_timing),
+                1 => self.can_cnt_1.set_bitrate(bit_timing),
+                2 => self.can_cnt_2.set_bitrate(bit_timing),
+                _ => {}
+            };
         }
-
-    fn set_bittiming(&mut self, channel: u16, timing: zerocopy::Ref<&[u8], gs_can::GsDeviceBittiming>) {
-        
     }
 
-    fn set_data_bittiming (&mut self, channel: u16, timing: zerocopy::Ref<&[u8], gs_can::GsDeviceBittiming>) {
-        
+    fn set_data_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming) {
+        if let Some(data_bit_timing) = Into::<Option<can::config::DataBitTiming>>::into(timing) {
+            match channel {
+                0 => self.can_cnt_0.set_fd_data_bitrate(data_bit_timing),
+                1 => self.can_cnt_1.set_fd_data_bitrate(data_bit_timing),
+                2 => self.can_cnt_2.set_fd_data_bitrate(data_bit_timing),
+                _ => {}
+            }
+        };
     }
 
-    fn get_bittiming (&self, channel: u16, timing: zerocopy::Ref<&mut [u8], gs_can::GsDeviceBtConst>) {
-        
+    fn get_bittiming(&self, channel: u16, timing: &mut gs_can::GsDeviceBtConst) {
+        if let Some(frequency) = match channel {
+            0 => Some(self.can_cnt_0.get_frequency()),
+            1 => Some(self.can_cnt_1.get_frequency()),
+            2 => Some(self.can_cnt_2.get_frequency()),
+            _ => None,
+        } {
+            timing.set_features(
+                GsDeviceBtConstFeature::GsCanFeatureFd
+                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
+                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly,
+            );
+            timing.fclk_can.set(frequency.0);
+            timing.tseg1_min.set(1);
+            timing.tseg1_max.set(255);
+            timing.tseg2_min.set(1);
+            timing.tseg2_max.set(127);
+            timing.sjw_max.set(127);
+            timing.brp_min.set(1);
+            timing.brp_max.set(511);
+            timing.brp_inc.set(1);
+        }
     }
 
-    fn get_bittiming_extended  (&self, channel: u16, timing: zerocopy::Ref<&mut [u8], gs_can::GsDeviceBtConstExtended>) {
-        
+    fn get_bittiming_extended(&self, channel: u16, timing: &mut gs_can::GsDeviceBtConstExtended) {
+        if let Some(frequency) = match channel {
+            0 => Some(self.can_cnt_0.get_frequency()),
+            1 => Some(self.can_cnt_1.get_frequency()),
+            2 => Some(self.can_cnt_2.get_frequency()),
+            _ => None,
+        } {
+            timing.set_features(
+                GsDeviceBtConstFeature::GsCanFeatureFd
+                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
+                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly,
+            );
+            timing.fclk_can.set(frequency.0);
+            timing.tseg1_min.set(1);
+            timing.tseg1_max.set(255);
+            timing.tseg2_min.set(1);
+            timing.tseg2_max.set(127);
+            timing.sjw_max.set(127);
+            timing.brp_min.set(1);
+            timing.brp_max.set(511);
+            timing.brp_inc.set(1);
+
+            timing.dtseg1_min.set(1);
+            timing.dtseg1_max.set(31);
+            timing.dtseg2_min.set(1);
+            timing.dtseg2_max.set(15);
+            timing.dsjw_max.set(15);
+            timing.dbrp_min.set(1);
+            timing.dbrp_max.set(31);
+            timing.dbrp_inc.set(1);
+        }
     }
 }
 
@@ -161,7 +231,32 @@ async fn main(_spawner: Spawner) {
     //     },
     // };
 
-    let can_handler = CAN_HANDLER.init(CanHandler{});
+    // create can
+    let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
+    can0.set_bitrate(500_000);
+    can0.set_fd_data_bitrate(4_000_000, true);
+    let mut can0 = can0.into_internal_loopback_mode();
+    let (can_tx_0, can_rx_0, can_cnt_0) = can0.split_with_control();
+
+    let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
+    can1.set_bitrate(500_000);
+    can1.set_fd_data_bitrate(4_000_000, true);
+    let mut can1 = can1.into_internal_loopback_mode();
+    let (can_tx_1, can_rx_1, can_cnt_1) = can1.split_with_control();
+
+    let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PG10, p.PG9, Irqs);
+    can2.set_bitrate(500_000);
+    can2.set_fd_data_bitrate(4_000_000, true);
+    let mut can2 = can2.into_internal_loopback_mode();
+    let (can_tx_2, can_rx_2, can_cnt_2) = can2.split_with_control();
+
+    info!("CAN Configured");
+
+    let can_handler = CAN_HANDLER.init(CanHandler {
+        can_cnt_0: can_cnt_0,
+        can_cnt_1: can_cnt_1,
+        can_cnt_2: can_cnt_2,
+    });
 
     // Create classes on the builder.
     let mut class = GsCanClass::new(&mut builder, &mut state, 3, can_handler);
@@ -171,21 +266,6 @@ async fn main(_spawner: Spawner) {
 
     // Run the USB device.
     let usb_fut = usb.run();
-
-    // create can
-    let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
-    // let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
-    // let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PG10, p.PG9, Irqs);
-
-    // 250k bps
-    can0.set_bitrate(500_000);
-    can0.set_fd_data_bitrate(4_000_000, true);
-
-    let mut can = can0.into_internal_loopback_mode();
-    let can_split0 = can.split();
-    // let mut can = can0.into_normal_mode();
-
-    info!("CAN Configured");
 
     // Do stuff with the class!
 
