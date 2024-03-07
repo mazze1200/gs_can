@@ -8,16 +8,18 @@ use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::usb_otg::{Driver, Instance};
 use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 
 use embassy_stm32::peripherals::*;
 use embassy_stm32::{can, rcc};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
-use futures::future::join;
+use futures::future::{join};
+use futures::StreamExt;
 use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures};
 use static_cell::StaticCell;
 use zerocopy::Ref;
+use futures::stream::select;
 
 use crate::gs_can::{GsCanClass, GsCanHandlers, GsDeviceBtConstFeature, State};
 
@@ -161,6 +163,12 @@ impl GsCanHandlers for CanHandler {
 
 static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
 
+
+pub enum Event{
+    CanRx(embassy_stm32::can::CanFrame,  Instant,u32)
+}
+
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     info!("Hello World!");
@@ -242,31 +250,12 @@ async fn main(_spawner: Spawner) {
         &mut control_buf,
     );
 
-    // let gs_can_handlers = GsCanHandlers {
-    //     get_timestamp: || embassy_time::Instant::now(),
-    //     set_bittiming: |channel, timing| {},
-    //     set_data_bittiming: |channel, timing| {},
-    //     get_bittiming: |channel, mut timing| {
-    //         timing.set_features(
-    //             GsDeviceBtConstFeature::GsCanFeatureFd
-    //                 | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-    //                 | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
-    //         )
-    //     },get_bittiming_extended: |channel, mut timing| {
-    //         timing.set_features(
-    //             GsDeviceBtConstFeature::GsCanFeatureFd
-    //                 | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-    //                 | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp,
-    //         )
-    //     },
-    // };
-
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(4_000_000, true);
     let mut can0 = can0.into_internal_loopback_mode();
-    let (can_tx_0, can_rx_0, can_cnt_0) = can0.split_with_control();
+    let (mut can_tx_0, mut can_rx_0, mut can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
@@ -279,6 +268,37 @@ async fn main(_spawner: Spawner) {
     can2.set_fd_data_bitrate(4_000_000, true);
     let mut can2 = can2.into_internal_loopback_mode();
     let (can_tx_2, can_rx_2, can_cnt_2) = can2.split_with_control();
+
+    // for data futures::stream::select(can_rx_0,can_rx_1);
+
+    // let v = can_rx_0.map(|x| x).next();
+    // let data =  can_rx_0.next().map(|v| v).await;
+
+    let mut can_rx_0 = can_rx_0.map(|(frame,ts)| Event::CanRx(frame,ts ,0 ));
+    let mut can_rx_1 = can_rx_1.map(|(frame,ts)| Event::CanRx(frame,ts ,1 ));
+    let mut can_rx_2 = can_rx_2.map(|(frame,ts)| Event::CanRx(frame,ts ,2 ));
+
+    let mut s  = select(select(can_rx_0,can_rx_1),can_rx_2);
+
+    while let Some(event) = s.next().await {
+        match event {
+            Event::CanRx(frame,ts,instant) => info!("{}", ts)
+        }
+    }
+
+    // while let ev = select(can_rx_0,can_rx_1) {
+    //     match ev {
+    //         Event::CanRx(frame,ts,instant) => info!("{}", ts)
+    //     }
+    // }
+
+    
+
+    // let stream1 = futures::stream::repeat(1).map(|v| v+1);
+    // let stream2 = futures::stream::repeat(2);
+    // let out =  futures::stream::select(stream1,stream2);
+
+
 
     info!("CAN Configured");
 
