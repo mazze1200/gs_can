@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use core::mem;
 use core::ops::IndexMut;
 use core::pin::pin;
 
@@ -19,7 +20,7 @@ use embassy_stm32::peripherals::*;
 use embassy_stm32::{can, rcc};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
-use futures::future::{join, join3, join4};
+use futures::future::{join, join3, join4, join5};
 use futures::stream::select;
 use futures::StreamExt;
 use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures, GsHostFrame};
@@ -342,6 +343,17 @@ async fn main(_spawner: Spawner) {
         None
     }));
 
+    let usb_tx_channel = Channel::<NoopRawMutex, GsHostFrame, 6>::new();
+    let usb_tx_fut = async {
+        loop {
+            let frame = usb_tx_channel.receive().await;
+            let tx_res = usb_tx.write_frame(&frame).await;
+            if tx_res.is_err() {
+                warn!("Add error handling!");
+            }
+        }
+    };
+
     let mut selectors = select(select(can_rx_0, can_rx_1), select(can_rx_2, usb_rx));
 
     let host_frames =
@@ -355,10 +367,7 @@ async fn main(_spawner: Spawner) {
                     let host_frame =
                         GsHostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
-                    let tx_res = usb_tx.write_frame(&host_frame).await;
-                    if tx_res.is_err() {
-                        warn!("Add error handling!");
-                    }
+                    usb_tx_channel.send(host_frame).await;
                 }
                 Event::UsbRx(frame) => {
                     info!("Can Host Frame received");
@@ -368,7 +377,7 @@ async fn main(_spawner: Spawner) {
                     can_tx_channel
                         .send((can_frame, frame.channel, (frame.echo_id.get() as u8) + 1u8))
                         .await;
-                    
+
                     let channel = frame.channel as usize;
                     let echo_id = frame.echo_id.get() as usize;
                     if let Some(channel_host_frames) = host_frames.get_mut(channel) {
@@ -387,18 +396,15 @@ async fn main(_spawner: Spawner) {
                         if let Some(host_frame) =
                             channel_host_frames.get_mut((echo_id - 1) as usize)
                         {
-                            if let Some(frame) = host_frame {
+                            let frame = mem::take(host_frame);
+                            if let Some(mut frame) = frame {
                                 frame.timestamp.set(ts.as_micros() as u32);
 
-                                let tx_res = usb_tx.write_frame(frame).await;
-                                if tx_res.is_err() {
-                                    warn!("Add error handling!");
-                                }
+                                usb_tx_channel.send(frame).await;
                             } else {
                                 warn!("here should be a frame but isn't!");
                             }
 
-                            *host_frame = None;
                             continue;
                         }
                     }
@@ -423,5 +429,5 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join4(led_fut, usb_fut, main_handler, can_tx_fut).await;
+    join5(led_fut, usb_fut, main_handler, can_tx_fut, usb_tx_fut).await;
 }
