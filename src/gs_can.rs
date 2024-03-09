@@ -12,7 +12,10 @@ use core::task::Poll;
 
 use defmt::{debug, info, warn};
 use embassy_stm32::can::config::{DataBitTiming, NominalBitTiming};
+use embassy_stm32::can::frame::{ClassicData, ClassicFrame, FdData, FdFrame, Header};
+use embassy_stm32::can::CanFrame;
 use embassy_sync::waitqueue::WakerRegistration;
+use embedded_hal::can::{ExtendedId, Id, StandardId};
 use flagset::{flags, FlagSet, InvalidBits};
 use futures::{Future, FutureExt, Stream, TryFutureExt};
 use num_derive::{FromPrimitive, ToPrimitive};
@@ -27,11 +30,14 @@ use embassy_usb::{Builder, Handler};
 use zerocopy::{AsBytes, FromZeroes, Ref};
 use zerocopy_derive::FromZeroes;
 
-use zerocopy::byteorder::little_endian::{U32, U64};
+use zerocopy::byteorder::little_endian::{U32};
 
 use enumflags2::{bitflags, make_bitflags, BitFlags};
 
 use futures::prelude::*;
+
+
+// extern  crate embedded_can;
 
 /// This should be used as `device_class` when building the `UsbDevice`.
 const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
@@ -406,10 +412,16 @@ pub struct GsHostFrame {
     pub flags: u8,
     pub reserved: u8,
     pub data: [u8; 64],
-    pub timestamp: U64,
+    pub timestamp: U32,
 }
 
 impl GsHostFrame {
+
+    // fn new() -> Self{
+    //     let buf= [0u8;mem::size_of::<GsHostFrame>()];
+    //     zerocopy::transmute!(buf)
+    // }
+
     fn get_flags(&self) -> Result<GsHostFrameFlags, InvalidBits> {
         // self.flags.into()
         match FlagSet::<GsHostFrameFlag>::new(self.flags.into()) {
@@ -419,6 +431,22 @@ impl GsHostFrame {
     }
     fn set_flags(&mut self, flags: GsHostFrameFlags) {
         self.flags = flags.0.bits();
+    }
+}
+
+impl Into<CanFrame> for &GsHostFrame{
+    fn into(self) -> CanFrame {
+        let id: embedded_can::Id = if (self.can_id.get() & 0x8000_0000) == 0x8000_0000{
+            embedded_can::Id::Extended( embedded_can::ExtendedId::new(self.can_id.get()).unwrap())
+        }else{ 
+            embedded_can::Id::Standard(embedded_can::StandardId::new(self.can_id.get() as u16).unwrap())
+        };
+
+        if self.get_flags().unwrap().0.contains(GsHostFrameFlag::GsCanFlagFd) {
+            CanFrame::FD(FdFrame::new(Header::new( id,self.can_dlc , false), FdData::new(&self.data[..]).unwrap()))
+        }else{
+            CanFrame::Classic(ClassicFrame::new(Header::new( id,self.can_dlc , false), ClassicData::new(&self.data[..]).unwrap()))
+        }
     }
 }
 

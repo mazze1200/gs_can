@@ -1,12 +1,13 @@
 #![no_std]
 #![no_main]
 
+use core::ops::IndexMut;
 use core::pin::pin;
 
 use defmt::{panic, *};
 use embassy_executor::Spawner;
 use embassy_stm32::can::enums::BusError;
-use embassy_stm32::can::frame::ClassicFrame;
+use embassy_stm32::can::frame::{self, ClassicFrame};
 use embassy_stm32::can::{CanFrame, FdcanControl, FdcanRx, Timestamp};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
@@ -23,7 +24,7 @@ use futures::stream::select;
 use futures::StreamExt;
 use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures, GsHostFrame};
 use static_cell::StaticCell;
-use zerocopy::Ref;
+use zerocopy::{FromZeroes, Ref};
 
 use futures::prelude::*;
 
@@ -175,6 +176,12 @@ pub enum Event {
     UsbRx(GsHostFrame),
 }
 
+// static GS_HOST_FRAMES_0: StaticCell<[GsHostFrame; 10]> = StaticCell::new();
+// static GS_HOST_FRAMES_1: StaticCell<[GsHostFrame; 10]> = StaticCell::new();
+// static GS_HOST_FRAMES_2: StaticCell<[GsHostFrame; 10]> = StaticCell::new();
+
+static GS_HOST_FRAMES: StaticCell<[[Option<GsHostFrame>; 10]; 3]> = StaticCell::new();
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     info!("Hello World!");
@@ -261,7 +268,7 @@ async fn main(_spawner: Spawner) {
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(4_000_000, true);
     let can0 = can0.into_internal_loopback_mode();
-    let (can_tx_0, mut can_rx_0, can_cnt_0) = can0.split_with_control();
+    let (mut can_tx_0, mut can_rx_0, can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
@@ -316,11 +323,48 @@ async fn main(_spawner: Spawner) {
 
     let mut selectors = select(select(can_rx_0, can_rx_1), select(can_rx_2, usb_rx));
 
+    // let host_frames_0 =
+    //     GS_HOST_FRAMES_0.init(array_init::array_init(|_| GsHostFrame::new_zeroed()));
+    // let host_frames_1 =
+    //     GS_HOST_FRAMES_1.init(array_init::array_init(|_| GsHostFrame::new_zeroed()));
+    // let host_frames_2 =
+    //     GS_HOST_FRAMES_2.init(array_init::array_init(|_| GsHostFrame::new_zeroed()));
+
+    let host_frames = GS_HOST_FRAMES.init(array_init::array_init(|_| {
+        // array_init::array_init(|_| GsHostFrame::new_zeroed())
+        array_init::array_init(|_| None)
+    }));
+
+    let my_frame = GsHostFrame::new_zeroed();
+
+    if let Some(hfs) = host_frames.get_mut(2) {
+        hfs[12] = Some(my_frame);
+        // if let Some(frames) = hfs{
+        //     // frames[0] = Some(my_frame);
+        // }
+    }
+
+    // let r = &host_frames[4];
+
     let main_handler = async {
         while let Some(event) = selectors.next().await {
             match event {
-                Event::CanRx(frame, ts, instant) => info!("{}", ts),
-                Event::UsbRx(frame) => info!("Can Host Frame received"),
+                Event::CanRx(frame, ts, channel) => info!("{}", ts),
+                Event::UsbRx(frame) => {
+                    info!("Can Host Frame received");
+
+                    let can_frame: CanFrame = (&frame).into();
+
+                    let tx_res = &mut can_tx_0.write_frame(&can_frame).await;
+
+                    let channel = frame.channel as usize;
+                    let echo_id = frame.echo_id.get() as usize;
+                    if let Some(channel_host_frames) = host_frames.get_mut(channel) {
+                        if let Some(host_frame) = channel_host_frames.get_mut(echo_id) {
+                            *host_frame = Some(frame);
+                        }
+                    }
+                }
                 Event::CanTx(echo_id, can) => info!("{}", echo_id),
             }
         }
