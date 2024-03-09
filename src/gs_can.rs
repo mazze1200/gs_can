@@ -765,9 +765,10 @@ where
     pub fn new(
         builder: &mut Builder<'d, D>,
         state: &'d mut State<'d>,
-        num_can_devices: u8,
+        num_can_channels: u8,
         can_handlers: &'d mut dyn GsCanHandlers,
     ) -> Self {
+        assert!(num_can_channels <= 3);
         assert!(builder.control_buf_len() >= 7);
 
         let mut func =
@@ -794,7 +795,7 @@ where
             shared: &state.shared,
             comm_if,
             can_handlers,
-            num_can_channels: num_can_devices,
+            num_can_channels,
         });
         builder.handler(control);
 
@@ -812,21 +813,6 @@ where
     pub fn max_packet_size(&self) -> u16 {
         // The size is the same for both endpoints.
         self.read_ep.info().max_packet_size
-    }
-
-    /// Writes a single packet into the IN endpoint.
-    pub async fn write_packet(&mut self, data: &[u8]) -> Result<(), EndpointError> {
-        self.write_ep.write(data).await
-    }
-
-    /// Reads a single packet from the OUT endpoint.
-    pub async fn read_packet(&mut self, data: &mut [u8]) -> Result<usize, EndpointError> {
-        self.read_ep.read(data).await
-    }
-
-    /// Waits for the USB host to enable this interface
-    pub async fn wait_connection(&mut self) {
-        self.read_ep.wait_enabled().await;
     }
 
     /// Split the class into a sender and receiver.

@@ -5,7 +5,9 @@ use core::pin::pin;
 
 use defmt::{panic, *};
 use embassy_executor::Spawner;
-use embassy_stm32::can::{CanFrame, FdcanControl};
+use embassy_stm32::can::enums::BusError;
+use embassy_stm32::can::frame::ClassicFrame;
+use embassy_stm32::can::{CanFrame, FdcanControl, FdcanRx, Timestamp};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::usb_otg::{Driver, Instance};
@@ -259,7 +261,7 @@ async fn main(_spawner: Spawner) {
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(4_000_000, true);
     let can0 = can0.into_internal_loopback_mode();
-    let (can_tx_0, can_rx_0, can_cnt_0) = can0.split_with_control();
+    let (can_tx_0, mut can_rx_0, can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
