@@ -415,7 +415,7 @@ pub struct GsHostFrame {
 }
 
 impl GsHostFrame {
-   pub  fn new_from(frame: &CanFrame, channel: u8, echo_id: u32, timestamp: u32) -> Self {
+    pub fn new_from(frame: &CanFrame, channel: u8, echo_id: u32, timestamp: u32) -> Self {
         let mut host_frame = GsHostFrame::new_zeroed();
 
         match frame {
@@ -509,7 +509,6 @@ pub struct GsCanClass<'d, D: Driver<'d>> {
     _comm_ep: D::EndpointIn,
     read_ep: D::EndpointOut,
     write_ep: D::EndpointIn,
-    control: &'d ControlShared,
 }
 
 struct Control<'a> {
@@ -534,34 +533,11 @@ impl Default for ControlShared {
     }
 }
 
-impl ControlShared {
-    async fn changed(&self) {
-        poll_fn(|cx| {
-            if self.changed.load(Ordering::Relaxed) {
-                self.changed.store(false, Ordering::Relaxed);
-                Poll::Ready(())
-            } else {
-                self.waker.borrow_mut().register(cx.waker());
-                Poll::Pending
-            }
-        })
-        .await;
-    }
-}
-
 impl<'a> Control<'a> {
     fn shared(&mut self) -> &'a ControlShared {
         self.shared
     }
 }
-
-// pub struct GsCanHandlers {
-//     pub get_timestamp: fn() -> embassy_time::Instant,
-//     pub set_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
-//     pub set_data_bittiming: fn(channel: u16, timing: Ref<&[u8], GsDeviceBittiming>),
-//     pub get_bittiming: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConst>),
-//     pub get_bittiming_extended: fn(channel: u16, timing: Ref<&mut [u8], GsDeviceBtConstExtended>),
-// }
 
 pub trait GsCanHandlers {
     fn get_timestamp(&self) -> embassy_time::Instant;
@@ -870,20 +846,11 @@ where
         });
         builder.handler(control);
 
-        let control_shared = &state.shared;
-
         GsCanClass {
             _comm_ep: comm_ep,
             read_ep,
             write_ep,
-            control: control_shared,
         }
-    }
-
-    /// Gets the maximum packet size in bytes.
-    pub fn max_packet_size(&self) -> u16 {
-        // The size is the same for both endpoints.
-        self.read_ep.info().max_packet_size
     }
 
     /// Split the class into a sender and receiver.
@@ -896,41 +863,8 @@ where
             },
             Receiver {
                 read_ep: self.read_ep,
-                // control: self.control,
             },
         )
-    }
-
-    /// Split the class into sender, receiver and control
-    ///
-    /// Allows concurrently sending and receiving packets whilst monitoring for
-    /// control changes (dtr, rts)
-    pub fn split_with_control(self) -> (Sender<'d, D>, Receiver<'d, D>, ControlChanged<'d>) {
-        (
-            Sender {
-                write_ep: self.write_ep,
-            },
-            Receiver {
-                read_ep: self.read_ep,
-            },
-            ControlChanged {
-                control: self.control,
-            },
-        )
-    }
-}
-
-/// CDC ACM Control status change monitor
-///
-/// You can obtain a `ControlChanged` with [`CdcAcmClass::split_with_control`]
-pub struct ControlChanged<'d> {
-    control: &'d ControlShared,
-}
-
-impl<'d> ControlChanged<'d> {
-    /// Return a future for when the control settings change
-    pub async fn control_changed(&self) {
-        self.control.changed().await;
     }
 }
 
@@ -942,12 +876,6 @@ pub struct Sender<'d, D: Driver<'d>> {
 }
 
 impl<'d, D: Driver<'d>> Sender<'d, D> {
-    /// Gets the maximum packet size in bytes.
-    pub fn max_packet_size(&self) -> u16 {
-        // The size is the same for both endpoints.
-        self.write_ep.info().max_packet_size
-    }
-
     /// Writes a single frame into the IN endpoint.
     pub async fn write_frame(&mut self, frame: &GsHostFrame) -> Result<(), EndpointError> {
         // self.write_ep.write(data).await
@@ -970,12 +898,6 @@ pub struct Receiver<'d, D: Driver<'d>> {
 }
 
 impl<'d, D: Driver<'d>> Receiver<'d, D> {
-    /// Gets the maximum packet size in bytes.
-    pub fn max_packet_size(&self) -> u16 {
-        // The size is the same for both endpoints.
-        self.read_ep.info().max_packet_size
-    }
-
     pub async fn read_frame(&mut self) -> Result<GsHostFrame, EndpointError> {
         let mut buf = [0u8; 96];
 
