@@ -268,24 +268,19 @@ async fn main(_spawner: Spawner) {
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(4_000_000, true);
     let can0 = can0.into_internal_loopback_mode();
-    let (mut can_tx_0, mut can_rx_0, can_cnt_0) = can0.split_with_control();
+    let (mut can_tx_0, can_rx_0, can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
     can1.set_fd_data_bitrate(4_000_000, true);
-    let mut can1 = can1.into_internal_loopback_mode();
-    let (can_tx_1, can_rx_1, can_cnt_1) = can1.split_with_control();
+    let can1 = can1.into_internal_loopback_mode();
+    let (mut can_tx_1, can_rx_1, can_cnt_1) = can1.split_with_control();
 
     let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PG10, p.PG9, Irqs);
     can2.set_bitrate(500_000);
     can2.set_fd_data_bitrate(4_000_000, true);
-    let mut can2 = can2.into_internal_loopback_mode();
-    let (can_tx_2, can_rx_2, can_cnt_2) = can2.split_with_control();
-
-    // for data futures::stream::select(can_rx_0,can_rx_1);
-
-    // let v = can_rx_0.map(|x| x).next();
-    // let data =  can_rx_0.next().map(|v| v).await;
+    let can2 = can2.into_internal_loopback_mode();
+    let (mut can_tx_2, can_rx_2, can_cnt_2) = can2.split_with_control();
 
     let can_rx_0 = can_rx_0.map(|(frame, ts)| Event::CanRx(frame, ts, 0));
     let can_rx_1 = can_rx_1.map(|(frame, ts)| Event::CanRx(frame, ts, 1));
@@ -300,7 +295,7 @@ async fn main(_spawner: Spawner) {
     });
 
     // Create classes on the builder.
-    let mut class = GsCanClass::new(&mut builder, &mut state, 3, can_handler);
+    let class = GsCanClass::new(&mut builder, &mut state, 3, can_handler);
 
     // Build the builder.
     let mut usb = builder.build();
@@ -323,34 +318,14 @@ async fn main(_spawner: Spawner) {
 
     let mut selectors = select(select(can_rx_0, can_rx_1), select(can_rx_2, usb_rx));
 
-    // let host_frames_0 =
-    //     GS_HOST_FRAMES_0.init(array_init::array_init(|_| GsHostFrame::new_zeroed()));
-    // let host_frames_1 =
-    //     GS_HOST_FRAMES_1.init(array_init::array_init(|_| GsHostFrame::new_zeroed()));
-    // let host_frames_2 =
-    //     GS_HOST_FRAMES_2.init(array_init::array_init(|_| GsHostFrame::new_zeroed()));
-
-    let host_frames = GS_HOST_FRAMES.init(array_init::array_init(|_| {
-        // array_init::array_init(|_| GsHostFrame::new_zeroed())
-        array_init::array_init(|_| None)
-    }));
-
-    // let my_frame = GsHostFrame::new_zeroed();
-
-    // if let Some(hfs) = host_frames.get_mut(2) {
-    //     hfs[12] = Some(my_frame);
-    //     // if let Some(frames) = hfs{
-    //     //     // frames[0] = Some(my_frame);
-    //     // }
-    // }
-
-    // let r = &host_frames[4];
+    let host_frames =
+        GS_HOST_FRAMES.init(array_init::array_init(|_| array_init::array_init(|_| None)));
 
     let main_handler = async {
         while let Some(event) = selectors.next().await {
             match event {
                 Event::CanRx(frame, ts, channel) => {
-                    info!("{}", ts);
+                    info!("CanRx {}", ts);
                     let host_frame =
                         GsHostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
@@ -364,7 +339,16 @@ async fn main(_spawner: Spawner) {
 
                     let can_frame: CanFrame = (&frame).into();
 
-                    let tx_res = &mut can_tx_0.write_frame(&can_frame).await;
+                    let tx_res = match frame.channel {
+                        0 => can_tx_0.write_frame(&can_frame).await,
+                        1 => can_tx_1.write_frame(&can_frame).await,
+                        2 => can_tx_2.write_frame(&can_frame).await,
+                        _ => {
+                            warn!("Invalid CAN channel {}", frame.channel);
+                            None
+                        }
+                    };
+
                     if tx_res.is_some() {
                         warn!("Add error handlingfor full buffer!");
                     }
@@ -381,7 +365,7 @@ async fn main(_spawner: Spawner) {
                     warn!("Add error handling!");
                 }
                 Event::CanTx(echo_id, ts, channel) => {
-                    info!("{}", echo_id);
+                    info!("CanTx {}", echo_id);
 
                     if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
                         if let Some(host_frame) = channel_host_frames.get_mut(echo_id as usize) {
