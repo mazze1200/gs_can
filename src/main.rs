@@ -299,20 +299,18 @@ async fn main(_spawner: Spawner) {
     // Run the USB device.
     let usb_fut = usb.run();
 
-    /// Control not needed, right? 
+    /// Control not needed, right?
     // let (usb_tx, usb_rx, usb_control) = class.split_with_control();
     let (usb_tx, usb_rx) = class.split();
 
     let usb_rx = pin!(stream::unfold(usb_rx, |mut usb_rx| async move {
-        let frame = usb_rx.read_frame2().await;
+        let frame = usb_rx.read_frame().await;
         if let Ok(frame) = frame {
             return Some((Event::UsbRx(frame), usb_rx));
         }
 
         None
     }));
-
-
 
     let mut selectors = select(select(can_rx_0, can_rx_1), select(can_rx_2, usb_rx));
 

@@ -29,7 +29,6 @@ use zerocopy_derive::FromZeroes;
 
 use zerocopy::byteorder::little_endian::{U32, U64};
 
-
 use enumflags2::{bitflags, make_bitflags, BitFlags};
 
 use futures::prelude::*;
@@ -837,7 +836,6 @@ where
         (
             Sender {
                 write_ep: self.write_ep,
-                control: self.control,
             },
             Receiver {
                 read_ep: self.read_ep,
@@ -854,11 +852,9 @@ where
         (
             Sender {
                 write_ep: self.write_ep,
-                control: self.control,
             },
             Receiver {
                 read_ep: self.read_ep,
-                // control: self.control,
             },
             ControlChanged {
                 control: self.control,
@@ -886,7 +882,6 @@ impl<'d> ControlChanged<'d> {
 /// You can obtain a `Sender` with [`CdcAcmClass::split`]
 pub struct Sender<'d, D: Driver<'d>> {
     write_ep: D::EndpointIn,
-    control: &'d ControlShared,
 }
 
 impl<'d, D: Driver<'d>> Sender<'d, D> {
@@ -896,14 +891,17 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
         self.write_ep.info().max_packet_size
     }
 
-    /// Writes a single packet into the IN endpoint.
-    pub async fn write_packet(&mut self, data: &[u8]) -> Result<(), EndpointError> {
-        self.write_ep.write(data).await
-    }
+    /// Writes a single frame into the IN endpoint.
+    pub async fn write_frame(&mut self, frame: &GsHostFrame) -> Result<(), EndpointError> {
+        // self.write_ep.write(data).await
 
-    /// Waits for the USB host to enable this interface
-    pub async fn wait_connection(&mut self) {
-        self.write_ep.wait_enabled().await;
+        let buf = frame.as_bytes();
+
+        self.write_ep.write(&buf[0..31]).await?;
+        self.write_ep.write(&buf[32..63]).await?;
+        self.write_ep.write(&buf[64..]).await?;
+
+        Ok(())
     }
 }
 
@@ -912,7 +910,6 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
 /// You can obtain a `Receiver` with [`CdcAcmClass::split`]
 pub struct Receiver<'d, D: Driver<'d>> {
     read_ep: D::EndpointOut,
-    // control: &'d ControlShared,
 }
 
 impl<'d, D: Driver<'d>> Receiver<'d, D> {
@@ -922,31 +919,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         self.read_ep.info().max_packet_size
     }
 
-    /// Reads a single packet from the OUT endpoint.
-    /// Must be called with a buffer large enough to hold max_packet_size bytes.
-    pub async fn read_packet(&mut self, data: &mut [u8]) -> Result<usize, EndpointError> {
-        self.read_ep.read(data).await
-    }
-
-    pub async fn read_frame(&mut self, frame: &mut GsHostFrame) -> Result<(), EndpointError> {
-        let mut buf = [0u8; 96];
-
-        // let d = self.read_ep.read(&mut buf[0..31]);
-        // core::pin::pin!(d);
-        // let p = d.poll_unpin(cx)
-
-        assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
-        assert_eq!(self.read_ep.read(&mut buf[32..63]).await?, 32);
-        assert_eq!(self.read_ep.read(&mut buf[64..]).await?, 20);
-
-        let out: &mut [u8; 84] = zerocopy::transmute_mut!(frame);
-
-        out.copy_from_slice(&buf[..84]);
-
-        Ok(())
-    }
-
-    pub async fn read_frame2(&mut self) -> Result<GsHostFrame, EndpointError> {
+    pub async fn read_frame(&mut self) -> Result<GsHostFrame, EndpointError> {
         let mut buf = [0u8; 96];
 
         assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
@@ -960,66 +933,5 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         }
 
         Err(EndpointError::BufferOverflow)
-    }
-
-
-
-    // pub fn iter(self) -> impl Stream<Item = i32> {
-    //     stream::unfold(self, |s| async { Some((inner().await, s)) })
-    // }
-
-}
-
-async fn inner() -> i32 {
-    42
-}
-
-impl<'d, D: Driver<'d>> Stream for Receiver<'d, D>
-where
-    <D as Driver<'d>>::EndpointOut: Unpin,
-{
-    type Item = GsHostFrame;
-
-    fn poll_next(
-        mut self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let mut buf = [0u8; 96];
-
-        // let test = self.read_ep.borrow_mut().read(&mut buf);
-
-        // let fut = self.read_ep.read(&mut buf[0..31]);
-
-        // let d = self.read_ep.read(&mut buf[0..31]);
-        // core::pin::pin!(d);
-        // let p = d.poll_unpin(cx)
-
-        // assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
-
-
-        // let me = core::pin::Pin::into_inner(self);
-
-        // let mut f = me.read_frame2();
-        // let res = f.poll(cx);
-
-
-        // let ep = &mut self.read_ep;
-
-        // let mut f= ep.read(&mut buf[0..31]);
-        // let mut f = pin!(f);
-        // f.poll(cx);
-
-
-        // let mut f =  self.read_frame2();
-        // let mut f = pin!(f);
-        // let p = f.poll(cx);
-
-
-        let mut f =  self.read_frame2();
-        let mut f = pin!(f);
-        let p = f.poll(cx);
-
-
-        Poll::Pending
     }
 }
