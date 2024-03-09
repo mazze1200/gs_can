@@ -30,12 +30,11 @@ use embassy_usb::{Builder, Handler};
 use zerocopy::{AsBytes, FromZeroes, Ref};
 use zerocopy_derive::FromZeroes;
 
-use zerocopy::byteorder::little_endian::{U32};
+use zerocopy::byteorder::little_endian::U32;
 
 use enumflags2::{bitflags, make_bitflags, BitFlags};
 
 use futures::prelude::*;
-
 
 // extern  crate embedded_can;
 
@@ -416,11 +415,42 @@ pub struct GsHostFrame {
 }
 
 impl GsHostFrame {
+   pub  fn new_from(frame: &CanFrame, channel: u8, echo_id: u32, timestamp: u32) -> Self {
+        let mut host_frame = GsHostFrame::new_zeroed();
 
-    // fn new() -> Self{
-    //     let buf= [0u8;mem::size_of::<GsHostFrame>()];
-    //     zerocopy::transmute!(buf)
-    // }
+        match frame {
+            CanFrame::Classic(frame) => {
+                let header = frame.header();
+                host_frame.can_dlc = header.len();
+                match header.id() {
+                    embedded_can::Id::Extended(id) => {
+                        host_frame.can_id.set(id.as_raw() | 0x8000_0000)
+                    }
+                    embedded_can::Id::Standard(id) => host_frame.can_id.set(id.as_raw() as u32),
+                };
+
+                host_frame.channel = channel;
+                host_frame.echo_id.set(echo_id);
+                host_frame.timestamp.set(timestamp);
+            }
+            CanFrame::FD(frame) => {
+                let header = frame.header();
+                host_frame.can_dlc = header.len();
+                match header.id() {
+                    embedded_can::Id::Extended(id) => {
+                        host_frame.can_id.set(id.as_raw() | 0x8000_0000);
+                    }
+                    embedded_can::Id::Standard(id) => host_frame.can_id.set(id.as_raw() as u32),
+                };
+                host_frame.set_flags(GsHostFrameFlags::new(GsHostFrameFlag::GsCanFlagFd));
+                host_frame.channel = channel;
+                host_frame.echo_id.set(echo_id);
+                host_frame.timestamp.set(timestamp);
+            }
+        }
+
+        host_frame
+    }
 
     fn get_flags(&self) -> Result<GsHostFrameFlags, InvalidBits> {
         // self.flags.into()
@@ -434,18 +464,31 @@ impl GsHostFrame {
     }
 }
 
-impl Into<CanFrame> for &GsHostFrame{
+impl Into<CanFrame> for &GsHostFrame {
     fn into(self) -> CanFrame {
-        let id: embedded_can::Id = if (self.can_id.get() & 0x8000_0000) == 0x8000_0000{
-            embedded_can::Id::Extended( embedded_can::ExtendedId::new(self.can_id.get()).unwrap())
-        }else{ 
-            embedded_can::Id::Standard(embedded_can::StandardId::new(self.can_id.get() as u16).unwrap())
+        let id: embedded_can::Id = if (self.can_id.get() & 0x8000_0000) == 0x8000_0000 {
+            embedded_can::Id::Extended(embedded_can::ExtendedId::new(self.can_id.get()).unwrap())
+        } else {
+            embedded_can::Id::Standard(
+                embedded_can::StandardId::new(self.can_id.get() as u16).unwrap(),
+            )
         };
 
-        if self.get_flags().unwrap().0.contains(GsHostFrameFlag::GsCanFlagFd) {
-            CanFrame::FD(FdFrame::new(Header::new( id,self.can_dlc , false), FdData::new(&self.data[..]).unwrap()))
-        }else{
-            CanFrame::Classic(ClassicFrame::new(Header::new( id,self.can_dlc , false), ClassicData::new(&self.data[..]).unwrap()))
+        if self
+            .get_flags()
+            .unwrap()
+            .0
+            .contains(GsHostFrameFlag::GsCanFlagFd)
+        {
+            CanFrame::FD(FdFrame::new(
+                Header::new(id, self.can_dlc, false),
+                FdData::new(&self.data[..]).unwrap(),
+            ))
+        } else {
+            CanFrame::Classic(ClassicFrame::new(
+                Header::new(id, self.can_dlc, false),
+                ClassicData::new(&self.data[..]).unwrap(),
+            ))
         }
     }
 }

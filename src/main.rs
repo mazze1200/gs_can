@@ -172,7 +172,7 @@ static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
 
 pub enum Event {
     CanRx(embassy_stm32::can::CanFrame, Instant, u8),
-    CanTx(u32, u8),
+    CanTx(u32, Instant, u8),
     UsbRx(GsHostFrame),
 }
 
@@ -310,7 +310,7 @@ async fn main(_spawner: Spawner) {
 
     /// Control not needed, right?
     // let (usb_tx, usb_rx, usb_control) = class.split_with_control();
-    let (usb_tx, usb_rx) = class.split();
+    let (mut usb_tx, usb_rx) = class.split();
 
     let usb_rx = pin!(stream::unfold(usb_rx, |mut usb_rx| async move {
         let frame = usb_rx.read_frame().await;
@@ -335,37 +335,74 @@ async fn main(_spawner: Spawner) {
         array_init::array_init(|_| None)
     }));
 
-    let my_frame = GsHostFrame::new_zeroed();
+    // let my_frame = GsHostFrame::new_zeroed();
 
-    if let Some(hfs) = host_frames.get_mut(2) {
-        hfs[12] = Some(my_frame);
-        // if let Some(frames) = hfs{
-        //     // frames[0] = Some(my_frame);
-        // }
-    }
+    // if let Some(hfs) = host_frames.get_mut(2) {
+    //     hfs[12] = Some(my_frame);
+    //     // if let Some(frames) = hfs{
+    //     //     // frames[0] = Some(my_frame);
+    //     // }
+    // }
 
     // let r = &host_frames[4];
 
     let main_handler = async {
         while let Some(event) = selectors.next().await {
             match event {
-                Event::CanRx(frame, ts, channel) => info!("{}", ts),
+                Event::CanRx(frame, ts, channel) => {
+                    info!("{}", ts);
+                    let host_frame =
+                        GsHostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
+
+                    let tx_res = usb_tx.write_frame(&host_frame).await;
+                    if tx_res.is_err() {
+                        warn!("Add error handling!");
+                    }
+                }
                 Event::UsbRx(frame) => {
                     info!("Can Host Frame received");
 
                     let can_frame: CanFrame = (&frame).into();
 
                     let tx_res = &mut can_tx_0.write_frame(&can_frame).await;
+                    if tx_res.is_some() {
+                        warn!("Add error handlingfor full buffer!");
+                    }
 
                     let channel = frame.channel as usize;
                     let echo_id = frame.echo_id.get() as usize;
                     if let Some(channel_host_frames) = host_frames.get_mut(channel) {
                         if let Some(host_frame) = channel_host_frames.get_mut(echo_id) {
                             *host_frame = Some(frame);
+                            continue;
                         }
                     }
+
+                    warn!("Add error handling!");
                 }
-                Event::CanTx(echo_id, can) => info!("{}", echo_id),
+                Event::CanTx(echo_id, ts, channel) => {
+                    info!("{}", echo_id);
+
+                    if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
+                        if let Some(host_frame) = channel_host_frames.get_mut(echo_id as usize) {
+                            if let Some(frame) = host_frame {
+                                frame.timestamp.set(ts.as_micros() as u32);
+
+                                let tx_res = usb_tx.write_frame(frame).await;
+                                if tx_res.is_err() {
+                                    warn!("Add error handling!");
+                                }
+                            } else {
+                                warn!("here should be a frame but isn't!");
+                            }
+
+                            *host_frame = None;
+                            continue;
+                        }
+                    }
+
+                    warn!("Add error handling!");
+                }
             }
         }
     };
