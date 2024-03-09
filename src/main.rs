@@ -237,8 +237,8 @@ async fn main(_spawner: Spawner) {
 
     // Create embassy-usb Config
     let mut config = embassy_usb::Config::new(0x1d50, 0x606f);
-    config.manufacturer = Some("Embassy");
-    config.product = Some("GS_CAN example");
+    config.manufacturer = Some("Mazze");
+    config.product = Some("GS_CAN");
     config.serial_number = Some("12345678");
 
     // Required for windows compatibility.
@@ -330,8 +330,6 @@ async fn main(_spawner: Spawner) {
     // Run the USB device.
     let usb_fut = usb.run();
 
-    /// Control not needed, right?
-    // let (usb_tx, usb_rx, usb_control) = class.split_with_control();
     let (mut usb_tx, usb_rx) = class.split();
 
     let usb_rx = pin!(stream::unfold(usb_rx, |mut usb_rx| async move {
