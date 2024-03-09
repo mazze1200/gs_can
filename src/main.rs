@@ -1,9 +1,11 @@
 #![no_std]
 #![no_main]
 
+use core::pin::pin;
+
 use defmt::{panic, *};
 use embassy_executor::Spawner;
-use embassy_stm32::can::FdcanControl;
+use embassy_stm32::can::{CanFrame, FdcanControl};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::usb_otg::{Driver, Instance};
@@ -14,12 +16,14 @@ use embassy_stm32::peripherals::*;
 use embassy_stm32::{can, rcc};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
-use futures::future::{join};
+use futures::future::{join, join3};
+use futures::stream::select;
 use futures::StreamExt;
-use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures};
+use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures, GsHostFrame};
 use static_cell::StaticCell;
 use zerocopy::Ref;
-use futures::stream::select;
+
+use futures::prelude::*;
 
 use crate::gs_can::{GsCanClass, GsCanHandlers, GsDeviceBtConstFeature, State};
 
@@ -163,11 +167,11 @@ impl GsCanHandlers for CanHandler {
 
 static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
 
-
-pub enum Event{
-    CanRx(embassy_stm32::can::CanFrame,  Instant,u32)
+pub enum Event {
+    CanRx(embassy_stm32::can::CanFrame, Instant, u8),
+    CanTx(u32, u8),
+    UsbRx(GsHostFrame),
 }
-
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -254,8 +258,8 @@ async fn main(_spawner: Spawner) {
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(4_000_000, true);
-    let mut can0 = can0.into_internal_loopback_mode();
-    let (mut can_tx_0, mut can_rx_0, mut can_cnt_0) = can0.split_with_control();
+    let can0 = can0.into_internal_loopback_mode();
+    let (can_tx_0, can_rx_0, can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
@@ -274,31 +278,9 @@ async fn main(_spawner: Spawner) {
     // let v = can_rx_0.map(|x| x).next();
     // let data =  can_rx_0.next().map(|v| v).await;
 
-    let mut can_rx_0 = can_rx_0.map(|(frame,ts)| Event::CanRx(frame,ts ,0 ));
-    let mut can_rx_1 = can_rx_1.map(|(frame,ts)| Event::CanRx(frame,ts ,1 ));
-    let mut can_rx_2 = can_rx_2.map(|(frame,ts)| Event::CanRx(frame,ts ,2 ));
-
-    let mut s  = select(select(can_rx_0,can_rx_1),can_rx_2);
-
-    while let Some(event) = s.next().await {
-        match event {
-            Event::CanRx(frame,ts,instant) => info!("{}", ts)
-        }
-    }
-
-    // while let ev = select(can_rx_0,can_rx_1) {
-    //     match ev {
-    //         Event::CanRx(frame,ts,instant) => info!("{}", ts)
-    //     }
-    // }
-
-    
-
-    // let stream1 = futures::stream::repeat(1).map(|v| v+1);
-    // let stream2 = futures::stream::repeat(2);
-    // let out =  futures::stream::select(stream1,stream2);
-
-
+    let can_rx_0 = can_rx_0.map(|(frame, ts)| Event::CanRx(frame, ts, 0));
+    let can_rx_1 = can_rx_1.map(|(frame, ts)| Event::CanRx(frame, ts, 1));
+    let can_rx_2 = can_rx_2.map(|(frame, ts)| Event::CanRx(frame, ts, 2));
 
     info!("CAN Configured");
 
@@ -317,9 +299,32 @@ async fn main(_spawner: Spawner) {
     // Run the USB device.
     let usb_fut = usb.run();
 
-    // Do stuff with the class!
+    /// Control not needed, right? 
+    // let (usb_tx, usb_rx, usb_control) = class.split_with_control();
+    let (usb_tx, usb_rx) = class.split();
 
-    info!("Waiting for usb_fut");
+    let usb_rx = pin!(stream::unfold(usb_rx, |mut usb_rx| async move {
+        let frame = usb_rx.read_frame2().await;
+        if let Ok(frame) = frame {
+            return Some((Event::UsbRx(frame), usb_rx));
+        }
+
+        None
+    }));
+
+
+
+    let mut selectors = select(select(can_rx_0, can_rx_1), select(can_rx_2, usb_rx));
+
+    let main_handler = async {
+        while let Some(event) = selectors.next().await {
+            match event {
+                Event::CanRx(frame, ts, instant) => info!("{}", ts),
+                Event::UsbRx(frame) => info!("Can Host Frame received"),
+                Event::CanTx(echo_id, can) => info!("{}", echo_id),
+            }
+        }
+    };
 
     let mut led = Output::new(p.PB14, Level::High, Speed::Low);
 
@@ -335,5 +340,5 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join(led_fut, usb_fut).await;
+    join3(led_fut, usb_fut, main_handler).await;
 }

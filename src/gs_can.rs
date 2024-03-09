@@ -2,9 +2,11 @@
 
 use core::borrow::BorrowMut;
 use core::cell::{Cell, RefCell};
+use core::clone;
 use core::future::poll_fn;
-use core::mem::{self, MaybeUninit};
+use core::mem::{self, size_of, size_of_val, MaybeUninit};
 use core::num::{NonZeroU16, NonZeroU8};
+use core::pin::pin;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::Poll;
 
@@ -12,6 +14,7 @@ use defmt::{debug, info, warn};
 use embassy_stm32::can::config::{DataBitTiming, NominalBitTiming};
 use embassy_sync::waitqueue::WakerRegistration;
 use flagset::{flags, FlagSet, InvalidBits};
+use futures::{Future, FutureExt, Stream, TryFutureExt};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use zerocopy_derive::{AsBytes, FromBytes};
@@ -26,7 +29,10 @@ use zerocopy_derive::FromZeroes;
 
 use zerocopy::byteorder::little_endian::{U32, U64};
 
+
 use enumflags2::{bitflags, make_bitflags, BitFlags};
+
+use futures::prelude::*;
 
 /// This should be used as `device_class` when building the `UsbDevice`.
 const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
@@ -391,17 +397,17 @@ impl From<u8> for GsHostFrameFlags {
     }
 }
 
-#[derive(AsBytes, FromZeroes)]
+#[derive(AsBytes, FromZeroes, FromBytes, Clone)]
 #[repr(C, packed)]
-struct GsHostFrame {
-    echo_id: U32,
-    can_id: U32,
-    can_dlc: u8,
-    channel: u8,
-    flags: u8,
-    reserved: u8,
-    data: [u8; 64],
-    timestamp: U64,
+pub struct GsHostFrame {
+    pub echo_id: U32,
+    pub can_id: U32,
+    pub can_dlc: u8,
+    pub channel: u8,
+    pub flags: u8,
+    pub reserved: u8,
+    pub data: [u8; 64],
+    pub timestamp: U64,
 }
 
 impl GsHostFrame {
@@ -835,7 +841,7 @@ where
             },
             Receiver {
                 read_ep: self.read_ep,
-                control: self.control,
+                // control: self.control,
             },
         )
     }
@@ -852,7 +858,7 @@ where
             },
             Receiver {
                 read_ep: self.read_ep,
-                control: self.control,
+                // control: self.control,
             },
             ControlChanged {
                 control: self.control,
@@ -906,7 +912,7 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
 /// You can obtain a `Receiver` with [`CdcAcmClass::split`]
 pub struct Receiver<'d, D: Driver<'d>> {
     read_ep: D::EndpointOut,
-    control: &'d ControlShared,
+    // control: &'d ControlShared,
 }
 
 impl<'d, D: Driver<'d>> Receiver<'d, D> {
@@ -922,8 +928,98 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         self.read_ep.read(data).await
     }
 
-    /// Waits for the USB host to enable this interface
-    pub async fn wait_connection(&mut self) {
-        self.read_ep.wait_enabled().await;
+    pub async fn read_frame(&mut self, frame: &mut GsHostFrame) -> Result<(), EndpointError> {
+        let mut buf = [0u8; 96];
+
+        // let d = self.read_ep.read(&mut buf[0..31]);
+        // core::pin::pin!(d);
+        // let p = d.poll_unpin(cx)
+
+        assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
+        assert_eq!(self.read_ep.read(&mut buf[32..63]).await?, 32);
+        assert_eq!(self.read_ep.read(&mut buf[64..]).await?, 20);
+
+        let out: &mut [u8; 84] = zerocopy::transmute_mut!(frame);
+
+        out.copy_from_slice(&buf[..84]);
+
+        Ok(())
+    }
+
+    pub async fn read_frame2(&mut self) -> Result<GsHostFrame, EndpointError> {
+        let mut buf = [0u8; 96];
+
+        assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
+        assert_eq!(self.read_ep.read(&mut buf[32..63]).await?, 32);
+        assert_eq!(self.read_ep.read(&mut buf[64..]).await?, 20);
+
+        let re: Option<(Ref<_, GsHostFrame>, _)> = Ref::new_from_prefix(&mut buf[..]);
+
+        if let Some((frame, _buffer)) = re {
+            return Ok(frame.clone());
+        }
+
+        Err(EndpointError::BufferOverflow)
+    }
+
+
+
+    // pub fn iter(self) -> impl Stream<Item = i32> {
+    //     stream::unfold(self, |s| async { Some((inner().await, s)) })
+    // }
+
+}
+
+async fn inner() -> i32 {
+    42
+}
+
+impl<'d, D: Driver<'d>> Stream for Receiver<'d, D>
+where
+    <D as Driver<'d>>::EndpointOut: Unpin,
+{
+    type Item = GsHostFrame;
+
+    fn poll_next(
+        mut self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let mut buf = [0u8; 96];
+
+        // let test = self.read_ep.borrow_mut().read(&mut buf);
+
+        // let fut = self.read_ep.read(&mut buf[0..31]);
+
+        // let d = self.read_ep.read(&mut buf[0..31]);
+        // core::pin::pin!(d);
+        // let p = d.poll_unpin(cx)
+
+        // assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
+
+
+        // let me = core::pin::Pin::into_inner(self);
+
+        // let mut f = me.read_frame2();
+        // let res = f.poll(cx);
+
+
+        // let ep = &mut self.read_ep;
+
+        // let mut f= ep.read(&mut buf[0..31]);
+        // let mut f = pin!(f);
+        // f.poll(cx);
+
+
+        // let mut f =  self.read_frame2();
+        // let mut f = pin!(f);
+        // let p = f.poll(cx);
+
+
+        let mut f =  self.read_frame2();
+        let mut f = pin!(f);
+        let p = f.poll(cx);
+
+
+        Poll::Pending
     }
 }
