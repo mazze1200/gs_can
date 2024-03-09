@@ -2,30 +2,28 @@
 #![no_main]
 
 use core::mem;
-use core::ops::IndexMut;
+
 use core::pin::pin;
 
 use defmt::{panic, *};
 use embassy_executor::Spawner;
-use embassy_stm32::can::enums::BusError;
-use embassy_stm32::can::frame::{self, ClassicFrame};
-use embassy_stm32::can::{CanFrame, FdcanControl, FdcanRx, Timestamp};
+
+use embassy_stm32::can::{CanFrame, FdcanControl};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
-use embassy_stm32::usb_otg::{Driver, Instance};
+use embassy_stm32::usb_otg::Driver;
 use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
 use embassy_time::{Instant, Timer};
 
 use embassy_stm32::peripherals::*;
 use embassy_stm32::{can, rcc};
-use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
-use futures::future::{join, join3, join4, join5};
+use futures::future::join5;
 use futures::stream::select;
 use futures::StreamExt;
-use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures, GsHostFrame};
+use gs_can::{GsDeviceBittiming, GsHostFrame};
 use static_cell::StaticCell;
-use zerocopy::{FromZeroes, Ref};
+
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -49,7 +47,6 @@ bind_interrupts!(struct Irqs {
 });
 
 struct CanHandler {
-    // cans: [FdcanControl; 3]
     can_cnt_0: FdcanControl<FDCAN1>,
     can_cnt_1: FdcanControl<FDCAN2>,
     can_cnt_2: FdcanControl<FDCAN3>,
@@ -179,10 +176,6 @@ pub enum Event {
     CanTx(u32, Instant, u8),
     UsbRx(GsHostFrame),
 }
-
-// static GS_HOST_FRAMES_0: StaticCell<[GsHostFrame; 10]> = StaticCell::new();
-// static GS_HOST_FRAMES_1: StaticCell<[GsHostFrame; 10]> = StaticCell::new();
-// static GS_HOST_FRAMES_2: StaticCell<[GsHostFrame; 10]> = StaticCell::new();
 
 static GS_HOST_FRAMES: StaticCell<[[Option<GsHostFrame>; 10]; 3]> = StaticCell::new();
 
