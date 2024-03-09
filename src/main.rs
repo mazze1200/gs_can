@@ -19,12 +19,15 @@ use embassy_stm32::peripherals::*;
 use embassy_stm32::{can, rcc};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
-use futures::future::{join, join3};
+use futures::future::{join, join3, join4};
 use futures::stream::select;
 use futures::StreamExt;
 use gs_can::{GsDeviceBittiming, GsDeviceBtConstFeatures, GsHostFrame};
 use static_cell::StaticCell;
 use zerocopy::{FromZeroes, Ref};
+
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::Channel;
 
 use futures::prelude::*;
 
@@ -286,6 +289,29 @@ async fn main(_spawner: Spawner) {
     let can_rx_1 = can_rx_1.map(|(frame, ts)| Event::CanRx(frame, ts, 1));
     let can_rx_2 = can_rx_2.map(|(frame, ts)| Event::CanRx(frame, ts, 2));
 
+    // let mut can_tx_channels: [Channel<NoopRawMutex, (CanFrame, u8, u8), 3>; 3] =
+    //     array_init::array_init(|_| Channel::<NoopRawMutex, (CanFrame, u8, u8), 3>::new());
+    let can_tx_channel = Channel::<NoopRawMutex, (CanFrame, u8, u8), 6>::new();
+
+    let can_tx_fut = async {
+        loop {
+            let (frame, channel, echo_id) = can_tx_channel.receive().await;
+            let tx_res = match channel {
+                0 => can_tx_0.write_frame(&frame, echo_id + 1u8).await,
+                1 => can_tx_1.write_frame(&frame, echo_id + 1u8).await,
+                2 => can_tx_2.write_frame(&frame, echo_id + 1u8).await,
+                _ => {
+                    warn!("Invalid CAN channel {}", channel);
+                    None
+                }
+            };
+
+            if tx_res.is_some() {
+                warn!("Add error handlingfor full buffer!");
+            }
+        }
+    };
+
     info!("CAN Configured");
 
     let can_handler = CAN_HANDLER.init(CanHandler {
@@ -339,20 +365,10 @@ async fn main(_spawner: Spawner) {
 
                     let can_frame: CanFrame = (&frame).into();
 
-                    let tx_res = match frame.channel {
-                        0 => can_tx_0.write_frame(&can_frame).await,
-                        1 => can_tx_1.write_frame(&can_frame).await,
-                        2 => can_tx_2.write_frame(&can_frame).await,
-                        _ => {
-                            warn!("Invalid CAN channel {}", frame.channel);
-                            None
-                        }
-                    };
-
-                    if tx_res.is_some() {
-                        warn!("Add error handlingfor full buffer!");
-                    }
-
+                    can_tx_channel
+                        .send((can_frame, frame.channel, (frame.echo_id.get() as u8) + 1u8))
+                        .await;
+                    
                     let channel = frame.channel as usize;
                     let echo_id = frame.echo_id.get() as usize;
                     if let Some(channel_host_frames) = host_frames.get_mut(channel) {
@@ -368,7 +384,9 @@ async fn main(_spawner: Spawner) {
                     info!("CanTx {}", echo_id);
 
                     if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
-                        if let Some(host_frame) = channel_host_frames.get_mut(echo_id as usize) {
+                        if let Some(host_frame) =
+                            channel_host_frames.get_mut((echo_id - 1) as usize)
+                        {
                             if let Some(frame) = host_frame {
                                 frame.timestamp.set(ts.as_micros() as u32);
 
@@ -405,5 +423,5 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join3(led_fut, usb_fut, main_handler).await;
+    join4(led_fut, usb_fut, main_handler, can_tx_fut).await;
 }
