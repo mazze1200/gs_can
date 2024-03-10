@@ -5,22 +5,66 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "preLaunchTask": "${defaultBuildTask}",
             "type": "probe-rs-debug",
             "request": "launch",
-            "name": "probe-rs CAN",
+            "name": "probe-rs CAN example",
             "cwd": "${workspaceFolder}",
             "connectUnderReset": true,
             "chip": "STM32H723ZGTx",
             "flashingConfig": {
                 "flashingEnabled": true,
-                "haltAfterReset": true
+                "haltAfterReset": false
             },
             "coreConfigs": [
                 {
                     "coreIndex": 0,
-                    "programBinary": "./target/thumbv7em-none-eabihf/debug/can"
-                }
-            ]
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/can",
+                    "rttEnabled": true,
+                    "options": {
+                        "env": {
+                            "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
+                        }
+                    },
+                },               
+            ], 
+            // "env": {
+            //     //!MODIFY (or remove)
+            //     // If you set this variable, check the VSCode console log window for the location of the log file.
+            //     "RUST_LOG": "info"
+            //   },
+            "consoleLogLevel": "Info"
+        },
+        {
+            "preLaunchTask": "${defaultBuildTask}",
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "probe-rs gs_can",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": true,
+            "chip": "STM32H723ZGTx",
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": false
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/gs_can",
+                    "rttEnabled": true,
+                    "options": {
+                        "env": {
+                            "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
+                        }
+                    },
+                },               
+            ], 
+            // "env": {
+            //     //!MODIFY (or remove)
+            //     // If you set this variable, check the VSCode console log window for the location of the log file.
+            //     "RUST_LOG": "info"
+            //   },
+            "consoleLogLevel": "Info"
         }
     ]
 }
