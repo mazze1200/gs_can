@@ -29,8 +29,8 @@ async fn main(_spawner: Spawner) {
     // 250k bps
     can.set_bitrate(250_000);
 
-    //let mut can = can.into_internal_loopback_mode();
-    let mut can = can.into_normal_mode();
+    let mut can = can.into_internal_loopback_mode();
+    // let mut can = can.into_normal_mode();
 
     info!("CAN Configured");
 
