@@ -12,7 +12,7 @@ use futures::future::join;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
-    OTG_FS => usb_otg::InterruptHandler<peripherals::USB_OTG_FS>;
+    OTG_HS => usb_otg::InterruptHandler<peripherals::USB_OTG_HS>;
 });
 
 #[embassy_executor::main]
@@ -47,7 +47,7 @@ async fn main(_spawner: Spawner) {
     let mut ep_out_buffer = [0u8; 256];
     let mut config = embassy_stm32::usb_otg::Config::default();
     config.vbus_detection = true;
-    let driver = Driver::new_fs(p.USB_OTG_FS, Irqs, p.PA12, p.PA11, &mut ep_out_buffer, config);
+    let driver = Driver::new_fs(p.USB_OTG_HS, Irqs, p.PA12, p.PA11, &mut ep_out_buffer, config);
 
     // Create embassy-usb Config
     let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
