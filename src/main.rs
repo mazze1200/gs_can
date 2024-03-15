@@ -208,7 +208,7 @@ async fn main(_spawner: Spawner) {
         config.rcc.voltage_scale = VoltageScale::Scale1;
     }
     config.rcc.hse = Some(rcc::Hse {
-        freq: embassy_stm32::time::Hertz(80_000_000),
+        freq: embassy_stm32::time::Hertz(25_000_000),
         mode: rcc::HseMode::Oscillator,
     });
     config.rcc.mux.fdcansel = rcc::mux::Fdcansel::HSE;
@@ -263,19 +263,19 @@ async fn main(_spawner: Spawner) {
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
     can0.set_bitrate(500_000);
-    can0.set_fd_data_bitrate(4_000_000, true);
+    // can0.set_fd_data_bitrate(4_000_000, true);
     let can0 = can0.into_internal_loopback_mode();
     let (mut can_tx_0, can_rx_0, can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
-    can1.set_fd_data_bitrate(4_000_000, true);
+    // can1.set_fd_data_bitrate(4_000_000, true);
     let can1 = can1.into_internal_loopback_mode();
     let (mut can_tx_1, can_rx_1, can_cnt_1) = can1.split_with_control();
 
     let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PG10, p.PG9, Irqs);
     can2.set_bitrate(500_000);
-    can2.set_fd_data_bitrate(4_000_000, true);
+    // can2.set_fd_data_bitrate(4_000_000, true);
     let can2 = can2.into_internal_loopback_mode();
     let (mut can_tx_2, can_rx_2, can_cnt_2) = can2.split_with_control();
 
@@ -410,11 +410,11 @@ async fn main(_spawner: Spawner) {
 
     let led_fut = async {
         loop {
-            info!("high");
+            info!("LED high");
             led.set_high();
             Timer::after_millis(500).await;
 
-            info!("low");
+            info!("LED low");
             led.set_low();
             Timer::after_millis(500).await;
         }

@@ -17,10 +17,10 @@ bind_interrupts!(struct Irqs {
 async fn main(_spawner: Spawner) {
     let mut config = Config::default();
     config.rcc.hse = Some(rcc::Hse {
-        freq: embassy_stm32::time::Hertz(80_000_000),
+        freq: embassy_stm32::time::Hertz(25_000_000),
         mode: rcc::HseMode::Oscillator,
     });
-    config.rcc.mux.fdcansel = rcc::mux::Fdcansel::HSE;
+    config.rcc.fdcan_clock_source = rcc::FdCanClockSource::HSE;
 
     let peripherals = embassy_stm32::init(config);
 
@@ -29,8 +29,8 @@ async fn main(_spawner: Spawner) {
     // 250k bps
     can.set_bitrate(250_000);
 
-    let mut can = can.into_internal_loopback_mode();
-    // let mut can = can.into_normal_mode();
+    //let mut can = can.into_internal_loopback_mode();
+    let mut can = can.into_normal_mode();
 
     info!("CAN Configured");
 
