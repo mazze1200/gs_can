@@ -3,21 +3,25 @@
 
 use defmt::{panic, *};
 use embassy_executor::Spawner;
+use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::usb_otg::{Driver, Instance};
-use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
+use embassy_stm32::{bind_interrupts, can, peripherals, usb_otg, Config};
+use embassy_time::Timer;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
-use futures::future::join;
+use futures::future::join3;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     OTG_HS => usb_otg::InterruptHandler<peripherals::USB_OTG_HS>;
+    FDCAN1_IT0 => can::IT0InterruptHandler<FDCAN1>;
+    FDCAN1_IT1 => can::IT1InterruptHandler<FDCAN1>;
 });
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    info!("Hello World!");
+    info!("Hello can_usb_clocks!");
 
     let mut config = Config::default();
     {
@@ -29,30 +33,20 @@ async fn main(_spawner: Spawner) {
         }); // needed for USB
         config.rcc.pll1 = Some(Pll {
             source: PllSource::HSI,   // 64 Mhz
-            prediv: PllPreDiv::DIV4,  // 16 Mhz
-            // ToDo: Check if MUL48 can be used, so that divq == DIV8 results in 96 Mhz for FDCAN 
-            mul: PllMul::MUL50,       // 800 Mhz
-            divp: Some(PllDiv::DIV2), // 400 Mhz
-            divq: None, 
+            prediv: PllPreDiv::DIV4,  // 16 Mhz, this has to be between 2 Mhz and 16 Mhz
+            mul: PllMul::MUL48,       // 768 Mhz
+            divp: Some(PllDiv::DIV2), // 384 Mhz, these dividers have to be at least 2 to create a 50/50 duty cycle (the VCO does not guarantee that)
+            divq: Some(PllDiv::DIV8), // 96 Mhz
             divr: None,
         });
-        config.rcc.pll2 = Some(Pll {
-            // to be used for FDCAN, see RM0468 Rev 3 Pages 336, 386
-            source: PllSource::HSI,   // 64 Mhz
-            prediv: PllPreDiv::DIV4,  // 16 Mhz, VCO input must be between 1 Mhz and 16 Mhz
-            mul: PllMul::MUL16,       // 256 Mhz
-            divp: None,               // can this be None and divq still be used?
-            divq: Some(PllDiv::DIV4), // 64 Mhz, for FDCAN PLL2_Q may not be above 75 Mhz
-            divr: None,
-        });
-        config.rcc.sys = Sysclk::PLL1_P; // 400 Mhz
-        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 200 Mhz
-        config.rcc.apb1_pre = APBPrescaler::DIV2; // 100 Mhz
-        config.rcc.apb2_pre = APBPrescaler::DIV2; // 100 Mhz
-        config.rcc.apb3_pre = APBPrescaler::DIV2; // 100 Mhz
-        config.rcc.apb4_pre = APBPrescaler::DIV2; // 100 Mhz
+        config.rcc.sys = Sysclk::PLL1_P; // 384 Mhz
+        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 192 Mhz
+        config.rcc.apb1_pre = APBPrescaler::DIV2; // 96 Mhz
+        config.rcc.apb2_pre = APBPrescaler::DIV2; // 96 Mhz
+        config.rcc.apb3_pre = APBPrescaler::DIV2; // 96 Mhz
+        config.rcc.apb4_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.voltage_scale = VoltageScale::Scale1;
-        config.rcc.fdcan_clock_source = FdCanClockSource::PLL2_Q;
+        config.rcc.fdcan_clock_source = FdCanClockSource::PLL1_Q;
     }
     let p = embassy_stm32::init(config);
 
@@ -120,9 +114,52 @@ async fn main(_spawner: Spawner) {
         }
     };
 
+    let mut can = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
+
+    // 250k bps
+    can.set_bitrate(250_000);
+
+    let can = can.into_internal_loopback_mode();
+    // let mut can = can.into_normal_mode();
+
+    info!("CAN Configured");
+
+    let mut i = 0;
+    let mut last_read_ts = embassy_time::Instant::now();
+
+    let can_fut = async {
+        let (mut tx, mut rx) = can.split();
+        // With split
+        loop {
+            let frame = can::frame::ClassicFrame::new_extended(0x123456F, &[i; 8]).unwrap();
+            info!("Writing frame");
+            _ = tx.write(&frame).await;
+
+            match rx.read().await {
+                Ok((rx_frame, ts)) => {
+                    let delta = (ts - last_read_ts).as_millis();
+                    last_read_ts = ts;
+                    info!(
+                        "Rx: {:x} {:x} {:x} {:x} --- NEW {}",
+                        rx_frame.data()[0],
+                        rx_frame.data()[1],
+                        rx_frame.data()[2],
+                        rx_frame.data()[3],
+                        delta,
+                    )
+                }
+                Err(_err) => error!("Error in frame"),
+            }
+
+            Timer::after_millis(250).await;
+
+            i = if i == 0xff { 0 } else { i + 1 };
+        }
+    };
+
     // Run everything concurrently.
     // If we had made everything `'static` above instead, we could do this using separate tasks instead.
-    join(usb_fut, echo_fut).await;
+    join3(usb_fut, echo_fut, can_fut).await;
 }
 
 struct Disconnected {}
