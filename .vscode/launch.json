@@ -91,6 +91,31 @@
                 },               
             ], 
             "consoleLogLevel": "Info"
+        },{
+            "preLaunchTask": "cargo build example",
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "probe-rs current example",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": true,
+            "chip": "STM32H723ZGTx",
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": false
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/${fileBasenameNoExtension}",
+                    "rttEnabled": true,
+                    "options": {
+                        "env": {
+                            "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
+                        }
+                    },
+                },               
+            ], 
+            "consoleLogLevel": "Info"
         }
     ]
 }
