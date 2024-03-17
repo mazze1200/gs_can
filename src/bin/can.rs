@@ -15,6 +15,8 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    info!("Hello CAN!");
+
     let mut config = Config::default();
     config.rcc.hse = Some(rcc::Hse {
         freq: embassy_stm32::time::Hertz(25_000_000),
@@ -29,8 +31,8 @@ async fn main(_spawner: Spawner) {
     // 250k bps
     can.set_bitrate(250_000);
 
-    //let mut can = can.into_internal_loopback_mode();
-    let mut can = can.into_normal_mode();
+    let mut can = can.into_internal_loopback_mode();
+    // let mut can = can.into_normal_mode();
 
     info!("CAN Configured");
 
