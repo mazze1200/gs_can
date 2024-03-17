@@ -186,32 +186,28 @@ async fn main(_spawner: Spawner) {
     let mut config = Config::default();
     {
         use embassy_stm32::rcc::*;
-        config.rcc.hsi = Some(HSIPrescaler::DIV1);
+        config.rcc.hsi = Some(HSIPrescaler::DIV1); // 64 Mhz
         config.rcc.csi = true;
         config.rcc.hsi48 = Some(Hsi48Config {
             sync_from_usb: true,
         }); // needed for USB
         config.rcc.pll1 = Some(Pll {
-            source: PllSource::HSI,
-            prediv: PllPreDiv::DIV4,
-            mul: PllMul::MUL50,
-            divp: Some(PllDiv::DIV2),
-            divq: None,
+            source: PllSource::HSI,   // 64 Mhz
+            prediv: PllPreDiv::DIV4,  // 16 Mhz, this has to be between 2 Mhz and 16 Mhz
+            mul: PllMul::MUL48,       // 768 Mhz
+            divp: Some(PllDiv::DIV2), // 384 Mhz, these dividers have to be at least 2 to create a 50/50 duty cycle (the VCO does not guarantee that)
+            divq: Some(PllDiv::DIV8), // 96 Mhz
             divr: None,
         });
-        config.rcc.sys = Sysclk::PLL1_P; // 400 Mhz
-        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 200 Mhz
-        config.rcc.apb1_pre = APBPrescaler::DIV2; // 100 Mhz
-        config.rcc.apb2_pre = APBPrescaler::DIV2; // 100 Mhz
-        config.rcc.apb3_pre = APBPrescaler::DIV2; // 100 Mhz
-        config.rcc.apb4_pre = APBPrescaler::DIV2; // 100 Mhz
+        config.rcc.sys = Sysclk::PLL1_P; // 384 Mhz
+        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 192 Mhz
+        config.rcc.apb1_pre = APBPrescaler::DIV2; // 96 Mhz
+        config.rcc.apb2_pre = APBPrescaler::DIV2; // 96 Mhz
+        config.rcc.apb3_pre = APBPrescaler::DIV2; // 96 Mhz
+        config.rcc.apb4_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.voltage_scale = VoltageScale::Scale1;
+        config.rcc.fdcan_clock_source = FdCanClockSource::PLL1_Q;
     }
-    config.rcc.hse = Some(rcc::Hse {
-        freq: embassy_stm32::time::Hertz(25_000_000),
-        mode: rcc::HseMode::Oscillator,
-    });
-    config.rcc.mux.fdcansel = rcc::mux::Fdcansel::HSE;
 
     let p = embassy_stm32::init(config);
 
