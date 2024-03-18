@@ -46,7 +46,8 @@ async fn main(_spawner: Spawner) {
         config.rcc.apb3_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.apb4_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.voltage_scale = VoltageScale::Scale1;
-        config.rcc.fdcan_clock_source = FdCanClockSource::PLL1_Q;
+        config.rcc.mux.fdcansel = mux::Fdcansel::PLL1_Q;
+        config.rcc.mux.usbsel = mux::Usbsel::HSI48;
     }
     let p = embassy_stm32::init(config);
 
