@@ -125,21 +125,21 @@ impl GsCanHandlers for CanHandler {
                     GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE
             */
 
-            timing.set_features(
-                GsDeviceBtConstFeature::GsCanFeatureFd
-                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
-                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly,
-            );
-
             // timing.set_features(
             //     GsDeviceBtConstFeature::GsCanFeatureFd
             //         | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-            //         | GsDeviceBtConstFeature::GsCanFeatureListenOnly
             //         | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
-            //         | GsDeviceBtConstFeature::GsCanFeatureLoopBack
-            //         | GsDeviceBtConstFeature::GsCanFeatureIdentify
+            //         | GsDeviceBtConstFeature::GsCanFeatureListenOnly,
             // );
+
+            timing.set_features(
+                GsDeviceBtConstFeature::GsCanFeatureFd
+                    | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly
+                    | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
+                    | GsDeviceBtConstFeature::GsCanFeatureLoopBack
+                    | GsDeviceBtConstFeature::GsCanFeatureIdentify
+            );
 
             timing.fclk_can.set(frequency.0);
             timing.tseg1_min.set(1);
@@ -199,8 +199,6 @@ impl GsCanHandlers for CanHandler {
     }
 }
 
-static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
-
 pub enum Event {
     CanRx(embassy_stm32::can::frame::FdFrame, Instant, u8),
     CanTx(u32, Instant, u8),
@@ -232,10 +230,19 @@ fn create_can_tx_event_stream<I: Instance>(
     })
 }
 
+// // Declare async tasks
+// #[embassy_executor::task]
+// async fn usb_handler(usb: UsbDevice<'d, D: Driver<'d>>){
+
+//     let usb_fut = usb.run();
+//     usb_fut.await;
+// }
+
+static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
 static GS_HOST_FRAMES: StaticCell<[[Option<GsHostFrame>; 10]; 3]> = StaticCell::new();
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     info!("Hello World!");
 
     let mut config = Config::default();
@@ -266,51 +273,6 @@ async fn main(_spawner: Spawner) {
     }
 
     let p = embassy_stm32::init(config);
-
-    // Create the driver, from the HAL.
-    let mut ep_out_buffer = [0u8; 256];
-    let mut config = embassy_stm32::usb_otg::Config::default();
-    config.vbus_detection = true;
-    let driver = Driver::new_fs(
-        p.USB_OTG_HS,
-        Irqs,
-        p.PA12,
-        p.PA11,
-        &mut ep_out_buffer,
-        config,
-    );
-
-    // Create embassy-usb Config
-    let mut config = embassy_usb::Config::new(0x1d50, 0x606f);
-    config.manufacturer = Some("Mazze");
-    config.product = Some("GS_CAN");
-    config.serial_number = Some("12345678");
-
-    // Required for windows compatibility.
-    // https://developer.nordicsemi.com/nRF_Connect_SDK/doc/1.9.1/kconfig/CONFIG_CDC_ACM_IAD.html#help
-    config.device_class = 0xff;
-    config.device_sub_class = 0xff;
-    config.device_protocol = 0xff;
-    config.composite_with_iads = false;
-
-    // Create embassy-usb DeviceBuilder using the driver and config.
-    // It needs some buffers for building the descriptors.
-    let mut device_descriptor = [0; 256];
-    let mut config_descriptor = [0; 256];
-    let mut bos_descriptor = [0; 256];
-    let mut control_buf = [0; 128];
-
-    let mut state = State::new();
-
-    let mut builder = Builder::new(
-        driver,
-        config,
-        &mut device_descriptor,
-        &mut config_descriptor,
-        &mut bos_descriptor,
-        &mut [], // no msos descriptors
-        &mut control_buf,
-    );
 
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
@@ -362,13 +324,58 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    info!("CAN Configured");
-
     let can_handler = CAN_HANDLER.init(CanHandler {
         can_cnt_0,
         can_cnt_1,
         can_cnt_2,
     });
+
+    info!("CAN Configured");
+
+    // Create the driver, from the HAL.
+    let mut ep_out_buffer = [0u8; 256];
+    let mut config = embassy_stm32::usb_otg::Config::default();
+    config.vbus_detection = true;
+    let driver = Driver::new_fs(
+        p.USB_OTG_HS,
+        Irqs,
+        p.PA12,
+        p.PA11,
+        &mut ep_out_buffer,
+        config,
+    );
+
+    // Create embassy-usb Config
+    let mut config = embassy_usb::Config::new(0x1d50, 0x606f);
+    config.manufacturer = Some("Mazze");
+    config.product = Some("GS_CAN");
+    config.serial_number = Some("12345678");
+
+    // Required for windows compatibility.
+    // https://developer.nordicsemi.com/nRF_Connect_SDK/doc/1.9.1/kconfig/CONFIG_CDC_ACM_IAD.html#help
+    config.device_class = 0xff;
+    config.device_sub_class = 0xff;
+    config.device_protocol = 0xff;
+    config.composite_with_iads = false;
+
+    // Create embassy-usb DeviceBuilder using the driver and config.
+    // It needs some buffers for building the descriptors.
+    let mut device_descriptor = [0; 256];
+    let mut config_descriptor = [0; 256];
+    let mut bos_descriptor = [0; 256];
+    let mut control_buf = [0; 128];
+
+    let mut state = State::new();
+
+    let mut builder = Builder::new(
+        driver,
+        config,
+        &mut device_descriptor,
+        &mut config_descriptor,
+        &mut bos_descriptor,
+        &mut [], // no msos descriptors
+        &mut control_buf,
+    );
 
     // Create classes on the builder.
     let class = GsCanClass::new(&mut builder, &mut state, 3, can_handler);
@@ -382,11 +389,14 @@ async fn main(_spawner: Spawner) {
     let (mut usb_tx, usb_rx) = class.split();
 
     let usb_rx = pin!(stream::unfold(usb_rx, |mut usb_rx| async move {
+        usb_rx.wait_connection().await;
+        info!("USB RX connected");
         let frame = usb_rx.read_frame().await;
         info!("Read Frame from USB");
-        if let Ok(frame) = frame {
-            return Some((Event::UsbRx(frame), usb_rx));
-        }
+        match frame {
+            Ok(frame) => return Some((Event::UsbRx(frame), usb_rx)),
+            Err(error) => warn!("Invalid Frame: Error {:?}", error),
+        };
 
         None
     }));
@@ -394,6 +404,9 @@ async fn main(_spawner: Spawner) {
     let usb_tx_channel = Channel::<NoopRawMutex, GsHostFrame, 6>::new();
     let usb_tx_fut = async {
         loop {
+            usb_tx.wait_connection().await;
+            info!("USB TX connected");
+
             let frame = usb_tx_channel.receive().await;
             let tx_res = usb_tx.write_frame(&frame).await;
             if tx_res.is_err() {
@@ -401,6 +414,8 @@ async fn main(_spawner: Spawner) {
             }
         }
     };
+
+    info!("USB Configured");
 
     let mut selectors = pin!(select(
         select(
@@ -421,7 +436,8 @@ async fn main(_spawner: Spawner) {
                     let host_frame =
                         GsHostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
-                    usb_tx_channel.send(host_frame).await;
+                        // TODO: This is just a test to see if we send two frames at the same time
+                    // usb_tx_channel.send(host_frame).await;
                 }
                 Event::UsbRx(frame) => {
                     info!("Can Host Frame received");
@@ -481,6 +497,8 @@ async fn main(_spawner: Spawner) {
         }
     };
 
+    info!("Start handlers");
+
+    // spawner.spawn(usb_fut).unwrap();
     join5(led_fut, usb_fut, main_handler, can_tx_fut, usb_tx_fut).await;
-    // join4(led_fut, usb_fut, main_handler, usb_tx_fut).await;
 }

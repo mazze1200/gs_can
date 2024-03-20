@@ -1,12 +1,15 @@
 //! CDC-ACM class implementation, aka Serial over USB.
 
 use core::cell::RefCell;
-use core::mem::MaybeUninit;
+use core::mem::{size_of, MaybeUninit};
 use core::num::{NonZeroU16, NonZeroU8};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use defmt::{debug, info, warn};
-use embassy_stm32::can::{config::{DataBitTiming, NominalBitTiming}, frame::{FdFrame, Header}};
+use embassy_stm32::can::{
+    config::{DataBitTiming, NominalBitTiming},
+    frame::{FdFrame, Header},
+};
 use embassy_sync::waitqueue::WakerRegistration;
 
 use flagset::{flags, FlagSet, InvalidBits};
@@ -16,7 +19,9 @@ use num_traits::{FromPrimitive, ToPrimitive};
 use zerocopy_derive::{AsBytes, FromBytes};
 
 use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
+use embassy_usb::driver::Endpoint;
 use embassy_usb::driver::{Driver, EndpointError, EndpointIn, EndpointOut};
+
 use embassy_usb::types::InterfaceNumber;
 use embassy_usb::{Builder, Handler};
 
@@ -396,7 +401,8 @@ impl From<u8> for GsHostFrameFlags {
     }
 }
 
-#[derive(AsBytes, FromZeroes, FromBytes, Clone)]
+#[derive(AsBytes, FromZeroes, FromBytes, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C, packed)]
 pub struct GsHostFrame {
     pub echo_id: U32,
@@ -443,11 +449,14 @@ impl GsHostFrame {
 
 impl Into<FdFrame> for &GsHostFrame {
     fn into(self) -> FdFrame {
-        let id: embedded_can::Id = if (self.can_id.get() & 0x8000_0000) == 0x8000_0000 {
-            embedded_can::Id::Extended(embedded_can::ExtendedId::new(self.can_id.get()).unwrap())
+        let mask_11 = 0b111_1111_1111u32;
+        let mask_29 = 0b1_1111_1111_1111_1111_1111_1111_1111u32;
+        let id: u32 = self.can_id.get();
+        let id: embedded_can::Id = if (id & 0x8000_0000) == 0x8000_0000 {
+            embedded_can::Id::Extended(embedded_can::ExtendedId::new(id & mask_29).unwrap())
         } else {
             embedded_can::Id::Standard(
-                embedded_can::StandardId::new(self.can_id.get() as u16).unwrap(),
+                embedded_can::StandardId::new((id & mask_11) as u16).unwrap(),
             )
         };
 
@@ -582,7 +591,7 @@ impl<'d> Handler for Control<'d> {
                 info!("GsUsbBreqBittiming");
                 match data {
                     Some((bit_timing, _)) => {
-                        info!("Set bit timing for CAN {}",req.value );
+                        info!("Set bit timing for CAN {}", req.value);
                         self.can_handlers.set_bittiming(req.value, &bit_timing);
                         Some(OutResponse::Accepted)
                     }
@@ -598,7 +607,7 @@ impl<'d> Handler for Control<'d> {
                 info!("GsUsbBreqDataBittiming");
                 match data {
                     Some((data_bit_timing, _)) => {
-                        info!("Set data_bittiming for CAN {}",req.value );
+                        info!("Set data_bittiming for CAN {}", req.value);
                         self.can_handlers
                             .set_data_bittiming(req.value, &data_bit_timing);
                         Some(OutResponse::Accepted)
@@ -701,7 +710,7 @@ impl<'d> Handler for Control<'d> {
                         info!("Send Timestamp {}", ts.as_micros() as u32);
                         timestamp.timestamp.set(ts.as_micros() as u32);
                         // timestamp.timestamp.set(0);
-                        
+
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
@@ -819,7 +828,6 @@ where
             None,
         );
 
-
         let write_ep = alt.endpoint_bulk_in(64);
 
         // This dummy EP is necessary, since the GS_CAN driver expects the out EP 2 but the first out EP would be 1
@@ -839,7 +847,7 @@ where
         GsCanClass {
             read_ep,
             write_ep,
-            _dummy_read_ep 
+            _dummy_read_ep,
         }
     }
 
@@ -880,6 +888,11 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
 
         Ok(())
     }
+
+    /// Waits for the USB host to enable this interface
+    pub async fn wait_connection(&mut self) {
+        self.write_ep.wait_enabled().await;
+    }
 }
 
 /// CDC ACM class packet receiver.
@@ -890,21 +903,58 @@ pub struct Receiver<'d, D: Driver<'d>> {
 }
 
 impl<'d, D: Driver<'d>> Receiver<'d, D> {
+    // pub async fn read_frame(&mut self) -> Result<GsHostFrame, EndpointError> {
+    //     let mut buf = [0u8; 96];
+
+    //     info!("Receiving Frame");
+
+    //     self.read_ep.read(&mut buf[0..31]).await?;
+    //     info!("Received first buffer");
+
+    //     self.read_ep.read(&mut buf[32..63]).await?;
+    //     info!("Received first buffer");
+
+    //     self.read_ep.read(&mut buf[64..]).await?;
+
+    //     let re: Option<(Ref<_, GsHostFrame>, _)> = Ref::new_from_prefix(&mut buf[..]);
+
+    //     if let Some((frame, _buffer)) = re {
+    //         return Ok(frame.clone());
+    //     }
+
+    //     Err(EndpointError::BufferOverflow)
+    // }
+
     pub async fn read_frame(&mut self) -> Result<GsHostFrame, EndpointError> {
-        let mut buf = [0u8; 96];
+        let mut buf = [0u8; 128];
 
         info!("Receiving Frame");
 
-        assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
-        assert_eq!(self.read_ep.read(&mut buf[32..63]).await?, 32);
-        assert_eq!(self.read_ep.read(&mut buf[64..]).await?, 20);
+        let mut total_bytes = 0usize;
+
+        loop {
+            let read_bytes = self.read_ep.read(&mut buf[total_bytes..]).await?;
+            total_bytes += read_bytes;
+            if read_bytes < self.read_ep.info().max_packet_size as usize {
+                break;
+            }
+        }
+
+        info!("Received buffer len: {} | {:?}", total_bytes, buf[..total_bytes]);
 
         let re: Option<(Ref<_, GsHostFrame>, _)> = Ref::new_from_prefix(&mut buf[..]);
 
-        if let Some((frame, _buffer)) = re {
-            return Ok(frame.clone());
+        if let Some((frame, _)) = re {
+            let clone = frame.clone();
+            info!("GsHostFrame: echo_id {}", clone.echo_id.get());
+            return Ok(clone);
         }
 
         Err(EndpointError::BufferOverflow)
+    }
+
+    /// Waits for the USB host to enable this interface
+    pub async fn wait_connection(&mut self) {
+        self.read_ep.wait_enabled().await;
     }
 }
