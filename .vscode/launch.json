@@ -5,38 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "preLaunchTask": "${defaultBuildTask}",
-            "type": "probe-rs-debug",
-            "request": "launch",
-            "name": "probe-rs CAN example",
-            "cwd": "${workspaceFolder}",
-            "connectUnderReset": true,
-            "chip": "STM32H723ZGTx",
-            "flashingConfig": {
-                "flashingEnabled": true,
-                "haltAfterReset": false
-            },
-            "coreConfigs": [
-                {
-                    "coreIndex": 0,
-                    "programBinary": "./target/thumbv7em-none-eabihf/debug/can",
-                    "rttEnabled": true,
-                    "options": {
-                        "env": {
-                            "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
-                        }
-                    },
-                },               
-            ], 
-            // "env": {
-            //     //!MODIFY (or remove)
-            //     // If you set this variable, check the VSCode console log window for the location of the log file.
-            //     "RUST_LOG": "info"
-            //   },
-            "consoleLogLevel": "Info"
-        },
-        {
-            "preLaunchTask": "${defaultBuildTask}",
+            "preLaunchTask": "cargo build",
             "type": "probe-rs-debug",
             "request": "launch",
             "name": "probe-rs gs_can",
@@ -57,8 +26,8 @@
                             "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
                         }
                     },
-                },               
-            ], 
+                },
+            ],
             // "env": {
             //     //!MODIFY (or remove)
             //     // If you set this variable, check the VSCode console log window for the location of the log file.
@@ -67,31 +36,6 @@
             "consoleLogLevel": "Info"
         },
         {
-            "preLaunchTask": "${defaultBuildTask}",
-            "type": "probe-rs-debug",
-            "request": "launch",
-            "name": "probe-rs usb_serial example",
-            "cwd": "${workspaceFolder}",
-            "connectUnderReset": true,
-            "chip": "STM32H723ZGTx",
-            "flashingConfig": {
-                "flashingEnabled": true,
-                "haltAfterReset": false
-            },
-            "coreConfigs": [
-                {
-                    "coreIndex": 0,
-                    "programBinary": "./target/thumbv7em-none-eabihf/debug/usb_serial",
-                    "rttEnabled": true,
-                    "options": {
-                        "env": {
-                            "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
-                        }
-                    },
-                },               
-            ], 
-            "consoleLogLevel": "Info"
-        },{
             "preLaunchTask": "cargo build example",
             "type": "probe-rs-debug",
             "request": "launch",
@@ -113,9 +57,66 @@
                             "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
                         }
                     },
-                },               
-            ], 
+                },
+            ],
             "consoleLogLevel": "Info"
         }
+        // {
+        //     "preLaunchTask": "${defaultBuildTask}",
+        //     "type": "probe-rs-debug",
+        //     "request": "launch",
+        //     "name": "probe-rs CAN example",
+        //     "cwd": "${workspaceFolder}",
+        //     "connectUnderReset": true,
+        //     "chip": "STM32H723ZGTx",
+        //     "flashingConfig": {
+        //         "flashingEnabled": true,
+        //         "haltAfterReset": false
+        //     },
+        //     "coreConfigs": [
+        //         {
+        //             "coreIndex": 0,
+        //             "programBinary": "./target/thumbv7em-none-eabihf/debug/can",
+        //             "rttEnabled": true,
+        //             "options": {
+        //                 "env": {
+        //                     "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
+        //                 }
+        //             },
+        //         },
+        //     ],
+        //     // "env": {
+        //     //     //!MODIFY (or remove)
+        //     //     // If you set this variable, check the VSCode console log window for the location of the log file.
+        //     //     "RUST_LOG": "info"
+        //     //   },
+        //     "consoleLogLevel": "Info"
+        // },
+        // {
+        //     "preLaunchTask": "${defaultBuildTask}",
+        //     "type": "probe-rs-debug",
+        //     "request": "launch",
+        //     "name": "probe-rs usb_serial example",
+        //     "cwd": "${workspaceFolder}",
+        //     "connectUnderReset": true,
+        //     "chip": "STM32H723ZGTx",
+        //     "flashingConfig": {
+        //         "flashingEnabled": true,
+        //         "haltAfterReset": false
+        //     },
+        //     "coreConfigs": [
+        //         {
+        //             "coreIndex": 0,
+        //             "programBinary": "./target/thumbv7em-none-eabihf/debug/usb_serial",
+        //             "rttEnabled": true,
+        //             "options": {
+        //                 "env": {
+        //                     "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
+        //                 }
+        //             },
+        //         },
+        //     ],
+        //     "consoleLogLevel": "Info"
+        // },
     ]
 }
