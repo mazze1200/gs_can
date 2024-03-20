@@ -1,29 +1,22 @@
 //! CDC-ACM class implementation, aka Serial over USB.
 
-use core::borrow::BorrowMut;
-use core::cell::{Cell, RefCell};
-use core::clone;
-use core::future::poll_fn;
-use core::mem::{self, size_of, size_of_val, MaybeUninit};
+use core::cell::RefCell;
+use core::mem::MaybeUninit;
 use core::num::{NonZeroU16, NonZeroU8};
-use core::pin::pin;
 use core::sync::atomic::{AtomicBool, Ordering};
-use core::task::Poll;
 
 use defmt::{debug, info, warn};
-use embassy_stm32::can::config::{DataBitTiming, NominalBitTiming};
-use embassy_stm32::can::frame::{ClassicData, ClassicFrame, FdData, FdFrame, Header};
-use embassy_stm32::can::CanFrame;
+use embassy_stm32::can::{config::{DataBitTiming, NominalBitTiming}, frame::{FdFrame, Header}};
 use embassy_sync::waitqueue::WakerRegistration;
-use embedded_hal::can::{ExtendedId, Id, StandardId};
+
 use flagset::{flags, FlagSet, InvalidBits};
-use futures::{Future, FutureExt, Stream, TryFutureExt};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
+
 use zerocopy_derive::{AsBytes, FromBytes};
 
 use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
-use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointOut};
+use embassy_usb::driver::{Driver, EndpointError, EndpointIn, EndpointOut};
 use embassy_usb::types::InterfaceNumber;
 use embassy_usb::{Builder, Handler};
 
@@ -31,8 +24,6 @@ use zerocopy::{AsBytes, FromZeroes, Ref};
 use zerocopy_derive::FromZeroes;
 
 use zerocopy::byteorder::little_endian::U32;
-
-use enumflags2::{bitflags, make_bitflags, BitFlags};
 
 use futures::prelude::*;
 
@@ -345,6 +336,10 @@ impl GsDeviceBtConstExtended {
     pub fn set_features(&mut self, flags: FlagSet<GsDeviceBtConstFeature>) {
         self.feature.set(flags.bits());
     }
+
+    pub fn new() -> Self {
+        GsDeviceBtConstExtended::new_zeroed()
+    }
 }
 
 /* Device specific constants */
@@ -415,39 +410,21 @@ pub struct GsHostFrame {
 }
 
 impl GsHostFrame {
-    pub fn new_from(frame: &CanFrame, channel: u8, echo_id: u32, timestamp: u32) -> Self {
+    pub fn new_from(frame: &FdFrame, channel: u8, echo_id: u32, timestamp: u32) -> Self {
         let mut host_frame = GsHostFrame::new_zeroed();
 
-        match frame {
-            CanFrame::Classic(frame) => {
-                let header = frame.header();
-                host_frame.can_dlc = header.len();
-                match header.id() {
-                    embedded_can::Id::Extended(id) => {
-                        host_frame.can_id.set(id.as_raw() | 0x8000_0000)
-                    }
-                    embedded_can::Id::Standard(id) => host_frame.can_id.set(id.as_raw() as u32),
-                };
-
-                host_frame.channel = channel;
-                host_frame.echo_id.set(echo_id);
-                host_frame.timestamp.set(timestamp);
+        let header = frame.header();
+        host_frame.can_dlc = header.len();
+        match header.id() {
+            embedded_can::Id::Extended(id) => {
+                host_frame.can_id.set(id.as_raw() | 0x8000_0000);
             }
-            CanFrame::FD(frame) => {
-                let header = frame.header();
-                host_frame.can_dlc = header.len();
-                match header.id() {
-                    embedded_can::Id::Extended(id) => {
-                        host_frame.can_id.set(id.as_raw() | 0x8000_0000);
-                    }
-                    embedded_can::Id::Standard(id) => host_frame.can_id.set(id.as_raw() as u32),
-                };
-                host_frame.set_flags(GsHostFrameFlags::new(GsHostFrameFlag::GsCanFlagFd));
-                host_frame.channel = channel;
-                host_frame.echo_id.set(echo_id);
-                host_frame.timestamp.set(timestamp);
-            }
-        }
+            embedded_can::Id::Standard(id) => host_frame.can_id.set(id.as_raw() as u32),
+        };
+        host_frame.set_flags(GsHostFrameFlags::new(GsHostFrameFlag::GsCanFlagFd));
+        host_frame.channel = channel;
+        host_frame.echo_id.set(echo_id);
+        host_frame.timestamp.set(timestamp);
 
         host_frame
     }
@@ -464,8 +441,8 @@ impl GsHostFrame {
     }
 }
 
-impl Into<CanFrame> for &GsHostFrame {
-    fn into(self) -> CanFrame {
+impl Into<FdFrame> for &GsHostFrame {
+    fn into(self) -> FdFrame {
         let id: embedded_can::Id = if (self.can_id.get() & 0x8000_0000) == 0x8000_0000 {
             embedded_can::Id::Extended(embedded_can::ExtendedId::new(self.can_id.get()).unwrap())
         } else {
@@ -474,22 +451,7 @@ impl Into<CanFrame> for &GsHostFrame {
             )
         };
 
-        if self
-            .get_flags()
-            .unwrap()
-            .0
-            .contains(GsHostFrameFlag::GsCanFlagFd)
-        {
-            CanFrame::FD(FdFrame::new(
-                Header::new(id, self.can_dlc, false),
-                FdData::new(&self.data[..]).unwrap(),
-            ))
-        } else {
-            CanFrame::Classic(ClassicFrame::new(
-                Header::new(id, self.can_dlc, false),
-                ClassicData::new(&self.data[..]).unwrap(),
-            ))
-        }
+        FdFrame::new(Header::new(id, self.can_dlc, false), &self.data[..]).unwrap()
     }
 }
 
@@ -506,9 +468,10 @@ impl Into<CanFrame> for &GsHostFrame {
 ///   can be sent if there is no other data to send. This is because USB bulk transactions must be
 ///   terminated with a short packet, even if the bulk endpoint is used for stream-like data.
 pub struct GsCanClass<'d, D: Driver<'d>> {
-    _comm_ep: D::EndpointIn,
+    // _comm_ep: D::EndpointIn,
     read_ep: D::EndpointOut,
     write_ep: D::EndpointIn,
+    _dummy_read_ep: D::EndpointOut,
 }
 
 struct Control<'a> {
@@ -573,6 +536,9 @@ impl<'d> Handler for Control<'d> {
         match FromPrimitive::from_u8(req.request) {
             Some(GsUsbRequestType::GsUsbBreqHostFormat) => {
                 let data: Option<(Ref<_, GsHostConfig>, _)> = Ref::new_from_prefix(data);
+
+                info!("GsUsbBreqHostFormat");
+
                 match data {
                     Some((host_config, _)) => {
                         info!(
@@ -589,6 +555,8 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqMode) => {
                 let data: Option<(Ref<_, GsDeviceMode>, _)> = Ref::new_from_prefix(data);
+
+                info!("GsUsbBreqMode");
                 match data {
                     Some((mode, _)) => {
                         match mode.get_mode() {
@@ -610,8 +578,11 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
+
+                info!("GsUsbBreqBittiming");
                 match data {
                     Some((bit_timing, _)) => {
+                        info!("Set bit timing for CAN {}",req.value );
                         self.can_handlers.set_bittiming(req.value, &bit_timing);
                         Some(OutResponse::Accepted)
                     }
@@ -623,8 +594,11 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqDataBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
+
+                info!("GsUsbBreqDataBittiming");
                 match data {
                     Some((data_bit_timing, _)) => {
+                        info!("Set data_bittiming for CAN {}",req.value );
                         self.can_handlers
                             .set_data_bittiming(req.value, &data_bit_timing);
                         Some(OutResponse::Accepted)
@@ -637,6 +611,8 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqIdentify) => {
                 let data: Option<(Ref<_, GsIdentifyMode>, _)> = Ref::new_from_prefix(data);
+
+                info!("GsUsbBreqIdentify");
                 match data {
                     Some((_identify_mode, _)) => {
                         info!("todo");
@@ -651,6 +627,8 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqSetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(data);
+
+                info!("GsUsbBreqSetTermination");
                 match data {
                     Some((_termination_state, _)) => {
                         info!("todo");
@@ -693,6 +671,7 @@ impl<'d> Handler for Control<'d> {
         match FromPrimitive::from_u8(req.request) {
             Some(GsUsbRequestType::GsUsbBreqDeviceConfig) => {
                 let data: Option<(Ref<_, GsDeviceConfig>, _)> = Ref::new_from_prefix(&mut *buf);
+                info!("GsUsbBreqDeviceConfig");
 
                 match data {
                     Some((mut device_config, _)) => {
@@ -713,14 +692,16 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqTimestamp) => {
                 let data: Option<(Ref<_, GsTimestamp>, _)> = Ref::new_from_prefix(&mut *buf);
+                info!("GsUsbBreqTimestamp");
 
                 match data {
                     Some((mut timestamp, _)) => {
                         let ts = self.can_handlers.get_timestamp();
 
+                        info!("Send Timestamp {}", ts.as_micros() as u32);
                         timestamp.timestamp.set(ts.as_micros() as u32);
-                        // Some(InResponse::Accepted(timestamp.into_ref().as_bytes()))
-
+                        // timestamp.timestamp.set(0);
+                        
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
@@ -731,10 +712,12 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqGetState) => {
                 let data: Option<(Ref<_, GsDeviceState>, _)> = Ref::new_from_prefix(&mut *buf);
+                info!("GsUsbBreqGetState");
 
                 match data {
                     Some((_device_state, _)) => {
-                        todo!("is dependant on the feature GsCanFeatureGetState");
+                        info!("Not implemented. This is dependant on the feature GsCanFeatureGetState");
+                        Some(InResponse::Rejected)
                         // device_state.rxerr.set(0);
                         // device_state.txerr.set(0);
                         // device_state.state.set(0);
@@ -749,11 +732,13 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqGetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(&mut *buf);
+                info!("GsUsbBreqGetTermination");
 
                 match data {
                     Some((_terminaton_state, _)) => {
-                        todo!("is dependant on the feature GsCanFeatureTermination");
-                        Some(InResponse::Accepted(buf))
+                        info!("Not implemented. This is dependant on the feature GsCanFeatureGetState");
+                        Some(InResponse::Rejected)
+                        // Some(InResponse::Accepted(buf))
                     }
                     None => {
                         info!("unaligned buffer for: GS_USB_BREQ_GET_TERMINATION");
@@ -763,6 +748,7 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqBtConst) => {
                 let data: Option<(Ref<_, GsDeviceBtConst>, _)> = Ref::new_from_prefix(&mut *buf);
+                info!("GsUsbBreqBtConst");
 
                 match data {
                     Some((mut bt_const, _)) => {
@@ -776,6 +762,8 @@ impl<'d> Handler for Control<'d> {
                 }
             }
             Some(GsUsbRequestType::GsUsbBreqBtConstExt) => {
+                info!("GsUsbBreqBtConstExt");
+
                 let data: Option<(Ref<_, GsDeviceBtConstExtended>, _)> =
                     Ref::new_from_prefix(&mut *buf);
 
@@ -831,10 +819,12 @@ where
             None,
         );
 
-        let comm_ep = alt.endpoint_interrupt_in(64, 255);
 
-        let write_ep = alt.endpoint_bulk_in(32);
-        let read_ep = alt.endpoint_bulk_out(32);
+        let write_ep = alt.endpoint_bulk_in(64);
+
+        // This dummy EP is necessary, since the GS_CAN driver expects the out EP 2 but the first out EP would be 1
+        let _dummy_read_ep = alt.endpoint_bulk_out(64);
+        let read_ep = alt.endpoint_bulk_out(64);
 
         drop(func);
 
@@ -847,9 +837,9 @@ where
         builder.handler(control);
 
         GsCanClass {
-            _comm_ep: comm_ep,
             read_ep,
             write_ep,
+            _dummy_read_ep 
         }
     }
 
@@ -880,6 +870,8 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
     pub async fn write_frame(&mut self, frame: &GsHostFrame) -> Result<(), EndpointError> {
         // self.write_ep.write(data).await
 
+        info!("Sending Frame");
+
         let buf = frame.as_bytes();
 
         self.write_ep.write(&buf[0..31]).await?;
@@ -900,6 +892,8 @@ pub struct Receiver<'d, D: Driver<'d>> {
 impl<'d, D: Driver<'d>> Receiver<'d, D> {
     pub async fn read_frame(&mut self) -> Result<GsHostFrame, EndpointError> {
         let mut buf = [0u8; 96];
+
+        info!("Receiving Frame");
 
         assert_eq!(self.read_ep.read(&mut buf[0..31]).await?, 32);
         assert_eq!(self.read_ep.read(&mut buf[32..63]).await?, 32);
