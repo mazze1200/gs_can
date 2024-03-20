@@ -4,11 +4,12 @@
 use core::mem;
 
 use core::pin::pin;
-use defmt_rtt as _;
 use defmt::{panic, *};
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 
-use embassy_stm32::can::{CanFrame, FdcanControl};
+use embassy_stm32::can::frame::FdFrame;
+use embassy_stm32::can::{FdcanControl, FdcanRx, FdcanTxEvent, Instance};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::usb_otg::Driver;
@@ -18,12 +19,11 @@ use embassy_time::{Instant, Timer};
 use embassy_stm32::peripherals::*;
 use embassy_stm32::{can, rcc};
 use embassy_usb::Builder;
-use futures::future::join5;
-use futures::stream::select;
+use futures::future::{join4, join5};
+use futures::stream::{select, unfold};
 use futures::StreamExt;
 use gs_can::{GsDeviceBittiming, GsHostFrame};
 use static_cell::StaticCell;
-
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
@@ -64,19 +64,19 @@ impl GsCanHandlers for CanHandler {
                     self.can_cnt_0.into_config_mode();
                     self.can_cnt_0.set_bitrate(bit_timing);
                     self.can_cnt_0
-                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
                 }
                 1 => {
                     self.can_cnt_1.into_config_mode();
                     self.can_cnt_1.set_bitrate(bit_timing);
                     self.can_cnt_1
-                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
                 }
                 2 => {
                     self.can_cnt_2.into_config_mode();
                     self.can_cnt_2.set_bitrate(bit_timing);
                     self.can_cnt_2
-                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
                 }
                 _ => {}
             };
@@ -90,19 +90,19 @@ impl GsCanHandlers for CanHandler {
                     self.can_cnt_0.into_config_mode();
                     self.can_cnt_0.set_fd_data_bitrate(data_bit_timing);
                     self.can_cnt_0
-                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
                 }
                 1 => {
                     self.can_cnt_1.into_config_mode();
                     self.can_cnt_1.set_fd_data_bitrate(data_bit_timing);
                     self.can_cnt_1
-                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
                 }
                 2 => {
                     self.can_cnt_2.into_config_mode();
                     self.can_cnt_2.set_fd_data_bitrate(data_bit_timing);
                     self.can_cnt_2
-                        .start(can::FdcanOperatingMode::NormalOperationMode);
+                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
                 }
                 _ => {}
             }
@@ -116,12 +116,31 @@ impl GsCanHandlers for CanHandler {
             2 => Some(self.can_cnt_2.get_frequency()),
             _ => None,
         } {
+            /*
+                .feature =
+                    GS_CAN_FEATURE_LISTEN_ONLY |
+                    GS_CAN_FEATURE_LOOP_BACK |
+                    GS_CAN_FEATURE_HW_TIMESTAMP |
+                    GS_CAN_FEATURE_IDENTIFY |
+                    GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE
+            */
+
             timing.set_features(
                 GsDeviceBtConstFeature::GsCanFeatureFd
                     | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
                     | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
                     | GsDeviceBtConstFeature::GsCanFeatureListenOnly,
             );
+
+            // timing.set_features(
+            //     GsDeviceBtConstFeature::GsCanFeatureFd
+            //         | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+            //         | GsDeviceBtConstFeature::GsCanFeatureListenOnly
+            //         | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
+            //         | GsDeviceBtConstFeature::GsCanFeatureLoopBack
+            //         | GsDeviceBtConstFeature::GsCanFeatureIdentify
+            // );
+
             timing.fclk_can.set(frequency.0);
             timing.tseg1_min.set(1);
             timing.tseg1_max.set(255);
@@ -131,6 +150,17 @@ impl GsCanHandlers for CanHandler {
             timing.brp_min.set(1);
             timing.brp_max.set(511);
             timing.brp_inc.set(1);
+
+            /*
+                        .tseg1_min = 1,
+            .tseg1_max = 16,
+            .tseg2_min = 1,
+            .tseg2_max = 8,
+            .sjw_max = 4,
+            .brp_min = 1,
+            .brp_max = 1024,
+            .brp_inc = 1,
+                     */
         }
     }
 
@@ -172,9 +202,34 @@ impl GsCanHandlers for CanHandler {
 static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
 
 pub enum Event {
-    CanRx(embassy_stm32::can::CanFrame, Instant, u8),
+    CanRx(embassy_stm32::can::frame::FdFrame, Instant, u8),
     CanTx(u32, Instant, u8),
     UsbRx(GsHostFrame),
+}
+
+fn create_can_rx_stream<'d, I: Instance>(
+    can: FdcanRx<'d, I>,
+    can_index: u8,
+) -> impl futures::Stream<Item = Event> + 'd {
+    unfold((can, can_index), |(mut rx, index)| async move {
+        loop {
+            let res = rx.read_fd().await;
+            match res {
+                Ok((msg, ts)) => return Some((Event::CanRx(msg, ts, index), (rx, index))),
+                Err(_) => {}
+            }
+        }
+    })
+}
+
+fn create_can_tx_event_stream<I: Instance>(
+    can: FdcanTxEvent<I>,
+    can_index: u8,
+) -> impl futures::Stream<Item = Event> {
+    unfold((can, can_index), |(mut rx, index)| async move {
+        let (_header, marker, timestamp) = rx.read_tx_event().await;
+        Some((Event::CanTx(marker as u32, timestamp, index), (rx, index)))
+    })
 }
 
 static GS_HOST_FRAMES: StaticCell<[[Option<GsHostFrame>; 10]; 3]> = StaticCell::new();
@@ -206,7 +261,8 @@ async fn main(_spawner: Spawner) {
         config.rcc.apb3_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.apb4_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.voltage_scale = VoltageScale::Scale1;
-        config.rcc.fdcan_clock_source = FdCanClockSource::PLL1_Q;
+        config.rcc.mux.fdcansel = mux::Fdcansel::PLL1_Q;
+        config.rcc.mux.usbsel = mux::Usbsel::HSI48;
     }
 
     let p = embassy_stm32::init(config);
@@ -242,7 +298,7 @@ async fn main(_spawner: Spawner) {
     let mut device_descriptor = [0; 256];
     let mut config_descriptor = [0; 256];
     let mut bos_descriptor = [0; 256];
-    let mut control_buf = [0; 64];
+    let mut control_buf = [0; 128];
 
     let mut state = State::new();
 
@@ -259,37 +315,41 @@ async fn main(_spawner: Spawner) {
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
     can0.set_bitrate(500_000);
-    // can0.set_fd_data_bitrate(4_000_000, true);
+    can0.set_fd_data_bitrate(4_000_000, true);
     let can0 = can0.into_internal_loopback_mode();
-    let (mut can_tx_0, can_rx_0, can_cnt_0) = can0.split_with_control();
+    let (mut can_tx_0, can_rx_0, can_tx_event_0, can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
-    // can1.set_fd_data_bitrate(4_000_000, true);
+    can1.set_fd_data_bitrate(4_000_000, true);
     let can1 = can1.into_internal_loopback_mode();
-    let (mut can_tx_1, can_rx_1, can_cnt_1) = can1.split_with_control();
+    let (mut can_tx_1, can_rx_1, can_tx_event_1, can_cnt_1) = can1.split_with_control();
 
     let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PG10, p.PG9, Irqs);
     can2.set_bitrate(500_000);
-    // can2.set_fd_data_bitrate(4_000_000, true);
+    can2.set_fd_data_bitrate(4_000_000, true);
     let can2 = can2.into_internal_loopback_mode();
-    let (mut can_tx_2, can_rx_2, can_cnt_2) = can2.split_with_control();
+    let (mut can_tx_2, can_rx_2, can_tx_event_2, can_cnt_2) = can2.split_with_control();
 
-    let can_rx_0 = can_rx_0.map(|(frame, ts)| Event::CanRx(frame, ts, 0));
-    let can_rx_1 = can_rx_1.map(|(frame, ts)| Event::CanRx(frame, ts, 1));
-    let can_rx_2 = can_rx_2.map(|(frame, ts)| Event::CanRx(frame, ts, 2));
+    let can_rx_stream_0 = create_can_rx_stream(can_rx_0, 0);
+    let can_rx_stream_1 = create_can_rx_stream(can_rx_1, 1);
+    let can_rx_stream_2 = create_can_rx_stream(can_rx_2, 2);
 
-    // let mut can_tx_channels: [Channel<NoopRawMutex, (CanFrame, u8, u8), 3>; 3] =
-    //     array_init::array_init(|_| Channel::<NoopRawMutex, (CanFrame, u8, u8), 3>::new());
-    let can_tx_channel = Channel::<NoopRawMutex, (CanFrame, u8, u8), 6>::new();
+    let can_tx_event_stream_0 = create_can_tx_event_stream(can_tx_event_0, 0);
+    let can_tx_event_stream_1 = create_can_tx_event_stream(can_tx_event_1, 1);
+    let can_tx_event_stream_2 = create_can_tx_event_stream(can_tx_event_2, 2);
+
+    // // let mut can_tx_channels: [Channel<NoopRawMutex, (CanFrame, u8, u8), 3>; 3] =
+    // //     array_init::array_init(|_| Channel::<NoopRawMutex, (CanFrame, u8, u8), 3>::new());
+    let can_tx_channel = Channel::<NoopRawMutex, (FdFrame, u8, u8), 6>::new();
 
     let can_tx_fut = async {
         loop {
             let (frame, channel, echo_id) = can_tx_channel.receive().await;
             let tx_res = match channel {
-                0 => can_tx_0.write_frame(&frame, echo_id + 1u8).await,
-                1 => can_tx_1.write_frame(&frame, echo_id + 1u8).await,
-                2 => can_tx_2.write_frame(&frame, echo_id + 1u8).await,
+                0 => can_tx_0.write_fd_with_marker(&frame, Some(echo_id)).await,
+                1 => can_tx_1.write_fd_with_marker(&frame, Some(echo_id)).await,
+                2 => can_tx_2.write_fd_with_marker(&frame, Some(echo_id)).await,
                 _ => {
                     warn!("Invalid CAN channel {}", channel);
                     None
@@ -297,7 +357,7 @@ async fn main(_spawner: Spawner) {
             };
 
             if tx_res.is_some() {
-                warn!("Add error handlingfor full buffer!");
+                warn!("Add error handling for full buffer!");
             }
         }
     };
@@ -305,9 +365,9 @@ async fn main(_spawner: Spawner) {
     info!("CAN Configured");
 
     let can_handler = CAN_HANDLER.init(CanHandler {
-        can_cnt_0: can_cnt_0,
-        can_cnt_1: can_cnt_1,
-        can_cnt_2: can_cnt_2,
+        can_cnt_0,
+        can_cnt_1,
+        can_cnt_2,
     });
 
     // Create classes on the builder.
@@ -323,6 +383,7 @@ async fn main(_spawner: Spawner) {
 
     let usb_rx = pin!(stream::unfold(usb_rx, |mut usb_rx| async move {
         let frame = usb_rx.read_frame().await;
+        info!("Read Frame from USB");
         if let Ok(frame) = frame {
             return Some((Event::UsbRx(frame), usb_rx));
         }
@@ -341,7 +402,13 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    let mut selectors = select(select(can_rx_0, can_rx_1), select(can_rx_2, usb_rx));
+    let mut selectors = pin!(select(
+        select(
+            select(can_rx_stream_0, can_rx_stream_1),
+            select(can_tx_event_stream_0, can_tx_event_stream_1)
+        ),
+        select(select(can_rx_stream_2, can_tx_event_stream_2), usb_rx)
+    ));
 
     let host_frames =
         GS_HOST_FRAMES.init(array_init::array_init(|_| array_init::array_init(|_| None)));
@@ -359,10 +426,10 @@ async fn main(_spawner: Spawner) {
                 Event::UsbRx(frame) => {
                     info!("Can Host Frame received");
 
-                    let can_frame: CanFrame = (&frame).into();
+                    let can_frame: FdFrame = (&frame).into();
 
                     can_tx_channel
-                        .send((can_frame, frame.channel, (frame.echo_id.get() as u8) + 1u8))
+                        .send((can_frame, frame.channel, (frame.echo_id.get() as u8)))
                         .await;
 
                     let channel = frame.channel as usize;
@@ -380,9 +447,7 @@ async fn main(_spawner: Spawner) {
                     info!("CanTx {}", echo_id);
 
                     if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
-                        if let Some(host_frame) =
-                            channel_host_frames.get_mut((echo_id - 1) as usize)
-                        {
+                        if let Some(host_frame) = channel_host_frames.get_mut((echo_id) as usize) {
                             let frame = mem::take(host_frame);
                             if let Some(mut frame) = frame {
                                 frame.timestamp.set(ts.as_micros() as u32);
@@ -406,15 +471,16 @@ async fn main(_spawner: Spawner) {
 
     let led_fut = async {
         loop {
-            info!("LED high");
+            // info!("LED high");
             led.set_high();
             Timer::after_millis(500).await;
 
-            info!("LED low");
+            // info!("LED low");
             led.set_low();
             Timer::after_millis(500).await;
         }
     };
 
     join5(led_fut, usb_fut, main_handler, can_tx_fut, usb_tx_fut).await;
+    // join4(led_fut, usb_fut, main_handler, usb_tx_fut).await;
 }
