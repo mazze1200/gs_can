@@ -160,7 +160,6 @@ impl GsDeviceMode {
     }
 
     fn get_flags(&self) -> Result<GsDeviceModeFlags, InvalidBits> {
-        // self.flags.into()
         match FlagSet::<GsDeviceModeFlag>::new(self.flags.into()) {
             Ok(flags_set) => Ok(GsDeviceModeFlags::new(flags_set)),
             Err(invalid) => Err(invalid),
@@ -355,9 +354,6 @@ impl GsDeviceBtConstExtended {
     }
 }
 
-/* Device specific constants */
-
-/// Internal state for CDC-ACM
 pub struct State<'a> {
     control: MaybeUninit<Control<'a>>,
     shared: ControlShared,
