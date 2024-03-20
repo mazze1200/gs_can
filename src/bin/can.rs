@@ -4,6 +4,7 @@
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::peripherals::*;
+use embassy_stm32::rcc::mux;
 use embassy_stm32::{bind_interrupts, can, rcc, Config};
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
@@ -22,7 +23,7 @@ async fn main(_spawner: Spawner) {
         freq: embassy_stm32::time::Hertz(25_000_000),
         mode: rcc::HseMode::Oscillator,
     });
-    config.rcc.fdcan_clock_source = rcc::FdCanClockSource::HSE;
+    config.rcc.mux.fdcansel = mux::Fdcansel::HSE;
 
     let peripherals = embassy_stm32::init(config);
 
