@@ -22,7 +22,7 @@ use embassy_usb::Builder;
 use futures::future::{join4, join5};
 use futures::stream::{select, unfold};
 use futures::StreamExt;
-use gs_can::{GsDeviceBittiming, GsHostFrame};
+use gs_can::{GsDeviceBittiming, HostFrame};
 use static_cell::StaticCell;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -202,7 +202,7 @@ impl GsCanHandlers for CanHandler {
 pub enum Event {
     CanRx(embassy_stm32::can::frame::FdFrame, Instant, u8),
     CanTx(u32, Instant, u8),
-    UsbRx(GsHostFrame),
+    UsbRx(HostFrame),
 }
 
 fn create_can_rx_stream<'d, I: Instance>(
@@ -239,7 +239,7 @@ fn create_can_tx_event_stream<I: Instance>(
 // }
 
 static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
-static GS_HOST_FRAMES: StaticCell<[[Option<GsHostFrame>; 10]; 3]> = StaticCell::new();
+static GS_HOST_FRAMES: StaticCell<[[Option<HostFrame>; 10]; 3]> = StaticCell::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -401,7 +401,7 @@ async fn main(spawner: Spawner) {
         None
     }));
 
-    let usb_tx_channel = Channel::<NoopRawMutex, GsHostFrame, 6>::new();
+    let usb_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
     let usb_tx_fut = async {
         loop {
             usb_tx.wait_connection().await;
@@ -434,7 +434,7 @@ async fn main(spawner: Spawner) {
                 Event::CanRx(frame, ts, channel) => {
                     info!("CanRx {}", ts);
                     let host_frame =
-                        GsHostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
+                    HostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
                         // TODO: This is just a test to see if we send two frames at the same time
                     // usb_tx_channel.send(host_frame).await;
@@ -445,11 +445,11 @@ async fn main(spawner: Spawner) {
                     let can_frame: FdFrame = (&frame).into();
 
                     can_tx_channel
-                        .send((can_frame, frame.channel, (frame.echo_id.get() as u8)))
+                        .send((can_frame, frame.get_channel(), (frame.get_echo_id() as u8)))
                         .await;
 
-                    let channel = frame.channel as usize;
-                    let echo_id = frame.echo_id.get() as usize;
+                    let channel = frame.get_channel() as usize;
+                    let echo_id = frame.get_echo_id() as usize;
                     if let Some(channel_host_frames) = host_frames.get_mut(channel) {
                         if let Some(host_frame) = channel_host_frames.get_mut(echo_id) {
                             *host_frame = Some(frame);
@@ -466,7 +466,7 @@ async fn main(spawner: Spawner) {
                         if let Some(host_frame) = channel_host_frames.get_mut((echo_id) as usize) {
                             let frame = mem::take(host_frame);
                             if let Some(mut frame) = frame {
-                                frame.timestamp.set(ts.as_micros() as u32);
+                                frame.set_timestamp(ts.as_micros() as u32);
 
                                 usb_tx_channel.send(frame).await;
                             } else {

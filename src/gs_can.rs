@@ -562,9 +562,7 @@ impl GsHostFrame for GsHostFrameFdTs {
 }
 
 pub enum HostFrame {
-    Classic(GsHostFrameClassic),
     ClassicTs(GsHostFrameClassicTs),
-    Fd(GsHostFrameFd),
     FdTs(GsHostFrameFdTs),
 }
 
@@ -608,8 +606,6 @@ impl HostFrame {
     pub fn get_channel(&self) -> u8 {
         match self {
             HostFrame::ClassicTs(frame) => frame.channel,
-            HostFrame::Classic(frame) => frame.channel,
-            HostFrame::Fd(frame) => frame.channel,
             HostFrame::FdTs(frame) => frame.channel,
         }
     }
@@ -617,9 +613,14 @@ impl HostFrame {
     pub fn get_echo_id(&self) -> u32 {
         match self {
             HostFrame::ClassicTs(frame) => frame.echo_id.get(),
-            HostFrame::Classic(frame) => frame.echo_id.get(),
-            HostFrame::Fd(frame) => frame.echo_id.get(),
             HostFrame::FdTs(frame) => frame.echo_id.get(),
+        }
+    }
+
+    pub fn set_timestamp(&mut self, timestamp: u32)  {
+        match self {
+            HostFrame::ClassicTs(frame) => frame.timestamp.set(timestamp),
+            HostFrame::FdTs(frame) => frame.timestamp.set(timestamp),
         }
     }
 }
@@ -627,21 +628,6 @@ impl HostFrame {
 impl Into<FdFrame> for &HostFrame {
     fn into(self) -> FdFrame {
         match self {
-            HostFrame::Classic(frame) => FdFrame::new(
-                Header::new(
-                    if frame.can_id.extended() {
-                        embedded_can::Id::Extended(ExtendedId::new(frame.can_id.Id()).unwrap())
-                    } else {
-                        embedded_can::Id::Standard(
-                            StandardId::new(frame.can_id.Id() as u16).unwrap(),
-                        )
-                    },
-                    frame.can_dlc,
-                    frame.can_id.rtr(),
-                ),
-                &frame.data[..],
-            )
-            .unwrap(),
             HostFrame::ClassicTs(frame) => FdFrame::new(
                 Header::new(
                     if frame.can_id.extended() {
@@ -653,26 +639,6 @@ impl Into<FdFrame> for &HostFrame {
                     },
                     frame.can_dlc,
                     frame.can_id.rtr(),
-                ),
-                &frame.data[..],
-            )
-            .unwrap(),
-            HostFrame::Fd(frame) => FdFrame::new(
-                Header::new_fd(
-                    if frame.can_id.extended() {
-                        embedded_can::Id::Extended(ExtendedId::new(frame.can_id.Id()).unwrap())
-                    } else {
-                        embedded_can::Id::Standard(
-                            StandardId::new(frame.can_id.Id() as u16).unwrap(),
-                        )
-                    },
-                    frame.can_dlc,
-                    frame.can_id.rtr(),
-                    frame
-                        .get_flags()
-                        .unwrap()
-                        .0
-                        .contains(GsHostFrameFlag::GsCanFlagBrs),
                 ),
                 &frame.data[..],
             )
