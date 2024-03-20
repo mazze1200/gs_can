@@ -16,8 +16,8 @@ use embassy_stm32::usb_otg::Driver;
 use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
 use embassy_time::{Instant, Timer};
 
-use embassy_stm32::peripherals::*;
 use embassy_stm32::can;
+use embassy_stm32::peripherals::*;
 use embassy_usb::Builder;
 use futures::future::join5;
 use futures::stream::{select, unfold};
@@ -138,7 +138,7 @@ impl GsCanHandlers for CanHandler {
                     | GsDeviceBtConstFeature::GsCanFeatureListenOnly
                     | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
                     | GsDeviceBtConstFeature::GsCanFeatureLoopBack
-                    | GsDeviceBtConstFeature::GsCanFeatureIdentify
+                    | GsDeviceBtConstFeature::GsCanFeatureIdentify,
             );
 
             timing.fclk_can.set(frequency.0);
@@ -200,8 +200,11 @@ impl GsCanHandlers for CanHandler {
 }
 
 pub enum Event {
+    /// Frame, Timestamp, Channel
     CanRx(embassy_stm32::can::frame::FdFrame, Instant, u8),
-    CanTx(u32, Instant, u8),
+    /// echo_id, Timestamp, Channel
+    CanTx(u8, Instant, u8),
+    /// Frame
     UsbRx(HostFrame),
 }
 
@@ -226,7 +229,7 @@ fn create_can_tx_event_stream<I: Instance>(
 ) -> impl futures::Stream<Item = Event> {
     unfold((can, can_index), |(mut rx, index)| async move {
         let (_header, marker, timestamp) = rx.read_tx_event().await;
-        Some((Event::CanTx(marker as u32, timestamp, index), (rx, index)))
+        Some((Event::CanTx(marker, timestamp, index), (rx, index)))
     })
 }
 
@@ -424,7 +427,7 @@ async fn main(_spawner: Spawner) {
                 Event::CanRx(frame, ts, channel) => {
                     info!("CanRx {}", ts);
                     let host_frame =
-                    HostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
+                        HostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
                     usb_tx_channel.send(host_frame).await;
                 }
@@ -433,18 +436,17 @@ async fn main(_spawner: Spawner) {
 
                     let can_frame: FdFrame = (&frame).into();
 
-                    can_tx_channel
-                        .send((can_frame, frame.get_channel(), (frame.get_echo_id() as u8)))
-                        .await;
-
                     let channel = frame.get_channel() as usize;
                     let echo_id = frame.get_echo_id() as usize;
                     if let Some(channel_host_frames) = host_frames.get_mut(channel) {
                         if let Some(host_frame) = channel_host_frames.get_mut(echo_id) {
                             *host_frame = Some(frame);
-                            continue;
                         }
                     }
+
+                    can_tx_channel
+                        .send((can_frame, channel as u8, echo_id as u8))
+                        .await;
 
                     warn!("Add error handling!");
                 }
