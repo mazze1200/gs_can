@@ -17,9 +17,9 @@ use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
 use embassy_time::{Instant, Timer};
 
 use embassy_stm32::peripherals::*;
-use embassy_stm32::{can, rcc};
+use embassy_stm32::can;
 use embassy_usb::Builder;
-use futures::future::{join4, join5};
+use futures::future::join5;
 use futures::stream::{select, unfold};
 use futures::StreamExt;
 use gs_can::{GsDeviceBittiming, HostFrame};
@@ -230,19 +230,11 @@ fn create_can_tx_event_stream<I: Instance>(
     })
 }
 
-// // Declare async tasks
-// #[embassy_executor::task]
-// async fn usb_handler(usb: UsbDevice<'d, D: Driver<'d>>){
-
-//     let usb_fut = usb.run();
-//     usb_fut.await;
-// }
-
 static CAN_HANDLER: StaticCell<CanHandler> = StaticCell::new();
 static GS_HOST_FRAMES: StaticCell<[[Option<HostFrame>; 10]; 3]> = StaticCell::new();
 
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) {
     info!("Hello World!");
 
     let mut config = Config::default();
@@ -301,8 +293,6 @@ async fn main(spawner: Spawner) {
     let can_tx_event_stream_1 = create_can_tx_event_stream(can_tx_event_1, 1);
     let can_tx_event_stream_2 = create_can_tx_event_stream(can_tx_event_2, 2);
 
-    // // let mut can_tx_channels: [Channel<NoopRawMutex, (CanFrame, u8, u8), 3>; 3] =
-    // //     array_init::array_init(|_| Channel::<NoopRawMutex, (CanFrame, u8, u8), 3>::new());
     let can_tx_channel = Channel::<NoopRawMutex, (FdFrame, u8, u8), 6>::new();
 
     let can_tx_fut = async {
@@ -436,8 +426,7 @@ async fn main(spawner: Spawner) {
                     let host_frame =
                     HostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
-                        // TODO: This is just a test to see if we send two frames at the same time
-                    // usb_tx_channel.send(host_frame).await;
+                    usb_tx_channel.send(host_frame).await;
                 }
                 Event::UsbRx(frame) => {
                     info!("Can Host Frame received");
@@ -499,6 +488,5 @@ async fn main(spawner: Spawner) {
 
     info!("Start handlers");
 
-    // spawner.spawn(usb_fut).unwrap();
     join5(led_fut, usb_fut, main_handler, can_tx_fut, usb_tx_fut).await;
 }

@@ -1,14 +1,13 @@
-//! CDC-ACM class implementation, aka Serial over USB.
+//! GS CAN class
 
-use core::array::from_mut;
 use core::cell::RefCell;
+use core::cmp;
 use core::mem::{size_of, MaybeUninit};
 use core::num::{NonZeroU16, NonZeroU8};
 use core::ops::BitOrAssign;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use defmt::{debug, info, warn};
-use embassy_stm32::can::frame;
 use embassy_stm32::can::{
     config::{DataBitTiming, NominalBitTiming},
     frame::{FdFrame, Header},
@@ -35,8 +34,6 @@ use zerocopy_derive::FromZeroes;
 use zerocopy::byteorder::little_endian::U32;
 
 use futures::prelude::*;
-
-// extern  crate embedded_can;
 
 /// This should be used as `device_class` when building the `UsbDevice`.
 const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
@@ -157,6 +154,7 @@ impl GsDeviceMode {
         FromPrimitive::from_u32(self.mode.into())
     }
 
+    #[allow(unused)]
     fn set_mode(&mut self, mode: GsDeviceModeMode) {
         self.mode.set(mode.to_u32().unwrap());
     }
@@ -168,6 +166,8 @@ impl GsDeviceMode {
             Err(invalid) => Err(invalid),
         }
     }
+
+    #[allow(unused)]
     fn set_flags(&mut self, flags: GsDeviceModeFlags) {
         self.flags.set(flags.0.bits());
     }
@@ -267,6 +267,7 @@ flags! {
 pub struct GsDeviceBtConstFeatures(FlagSet<GsDeviceBtConstFeature>);
 
 impl GsDeviceBtConstFeatures {
+    #[allow(unused)]
     pub fn new(flags: impl Into<FlagSet<GsDeviceBtConstFeature>>) -> GsDeviceBtConstFeatures {
         GsDeviceBtConstFeatures(flags.into())
     }
@@ -300,6 +301,7 @@ pub struct GsDeviceBtConst {
 }
 
 impl GsDeviceBtConst {
+    #[allow(unused)]
     pub fn get_features(&self) -> Result<GsDeviceBtConstFeatures, InvalidBits> {
         match FlagSet::<GsDeviceBtConstFeature>::new(self.feature.into()) {
             Ok(flags_set) => Ok(GsDeviceBtConstFeatures::new(flags_set)),
@@ -336,6 +338,7 @@ pub struct GsDeviceBtConstExtended {
 }
 
 impl GsDeviceBtConstExtended {
+    #[allow(unused)]
     pub fn get_features(&self) -> Result<GsDeviceBtConstFeatures, InvalidBits> {
         match FlagSet::<GsDeviceBtConstFeature>::new(self.feature.into()) {
             Ok(flags_set) => Ok(GsDeviceBtConstFeatures::new(flags_set)),
@@ -346,6 +349,7 @@ impl GsDeviceBtConstExtended {
         self.feature.set(flags.bits());
     }
 
+    #[allow(unused)]
     pub fn new() -> Self {
         GsDeviceBtConstExtended::new_zeroed()
     }
@@ -431,7 +435,7 @@ impl GsCanId {
         Self(id)
     }
 
-    fn Id(&self) -> u32 {
+    fn id(&self) -> u32 {
         let id = self.0.get();
         if id & 0x8000_0000 == 0x8000_0000 {
             id & 0x1FFF_FFFF
@@ -597,7 +601,7 @@ impl HostFrame {
             hf.channel = channel;
             hf.echo_id.set(echo_id);
             hf.timestamp.set(timestamp);
-            hf.data.copy_from_slice(frame.data());
+            hf.data.copy_from_slice(&frame.data()[..8]);
 
             HostFrame::ClassicTs(hf)
         }
@@ -617,7 +621,7 @@ impl HostFrame {
         }
     }
 
-    pub fn set_timestamp(&mut self, timestamp: u32)  {
+    pub fn set_timestamp(&mut self, timestamp: u32) {
         match self {
             HostFrame::ClassicTs(frame) => frame.timestamp.set(timestamp),
             HostFrame::FdTs(frame) => frame.timestamp.set(timestamp),
@@ -631,10 +635,10 @@ impl Into<FdFrame> for &HostFrame {
             HostFrame::ClassicTs(frame) => FdFrame::new(
                 Header::new(
                     if frame.can_id.extended() {
-                        embedded_can::Id::Extended(ExtendedId::new(frame.can_id.Id()).unwrap())
+                        embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
                     } else {
                         embedded_can::Id::Standard(
-                            StandardId::new(frame.can_id.Id() as u16).unwrap(),
+                            StandardId::new(frame.can_id.id() as u16).unwrap(),
                         )
                     },
                     frame.can_dlc,
@@ -646,10 +650,10 @@ impl Into<FdFrame> for &HostFrame {
             HostFrame::FdTs(frame) => FdFrame::new(
                 Header::new_fd(
                     if frame.can_id.extended() {
-                        embedded_can::Id::Extended(ExtendedId::new(frame.can_id.Id()).unwrap())
+                        embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
                     } else {
                         embedded_can::Id::Standard(
-                            StandardId::new(frame.can_id.Id() as u16).unwrap(),
+                            StandardId::new(frame.can_id.id() as u16).unwrap(),
                         )
                     },
                     frame.can_dlc,
@@ -667,44 +671,6 @@ impl Into<FdFrame> for &HostFrame {
     }
 }
 
-// impl GsHostFrame {
-//     pub fn new_from(frame: &FdFrame, channel: u8, echo_id: u32, timestamp: u32) -> Self {
-//         let mut host_frame = GsHostFrame::new_zeroed();
-
-//         let header = frame.header();
-//         host_frame.can_dlc = header.len();
-//         match header.id() {
-//             embedded_can::Id::Extended(id) => {
-//                 host_frame.can_id.set(id.as_raw() | 0x8000_0000);
-//             }
-//             embedded_can::Id::Standard(id) => host_frame.can_id.set(id.as_raw() as u32),
-//         };
-//         host_frame.set_flags(GsHostFrameFlags::new(GsHostFrameFlag::GsCanFlagFd));
-//         host_frame.channel = channel;
-//         host_frame.echo_id.set(echo_id);
-//         host_frame.timestamp.set(timestamp);
-
-//         host_frame
-//     }
-// }
-
-// impl Into<FdFrame> for &GsHostFrame {
-//     fn into(self) -> FdFrame {
-//         let mask_11 = 0b111_1111_1111u32;
-//         let mask_29 = 0b1_1111_1111_1111_1111_1111_1111_1111u32;
-//         let id: u32 = self.can_id.get();
-//         let id: embedded_can::Id = if (id & 0x8000_0000) == 0x8000_0000 {
-//             embedded_can::Id::Extended(embedded_can::ExtendedId::new(id & mask_29).unwrap())
-//         } else {
-//             embedded_can::Id::Standard(
-//                 embedded_can::StandardId::new((id & mask_11) as u16).unwrap(),
-//             )
-//         };
-
-//         FdFrame::new(Header::new(id, self.can_dlc, false), &self.data[..]).unwrap()
-//     }
-// }
-
 pub struct GsCanClass<'d, D: Driver<'d>> {
     read_ep: D::EndpointOut,
     write_ep: D::EndpointIn,
@@ -718,7 +684,6 @@ struct Control<'a> {
     num_can_channels: u8,
 }
 
-/// Shared data between Control and CdcAcmClass
 struct ControlShared {
     waker: RefCell<WakerRegistration>,
     changed: AtomicBool,
@@ -1032,7 +997,7 @@ impl<'d, D> GsCanClass<'d, D>
 where
     D: Driver<'d>,
 {
-    /// Creates a new CdcAcmClass with the provided UsbBus and `max_packet_size` in bytes. For
+    /// Creates a new GsCanClass with the provided UsbBus and `max_packet_size` in bytes. For
     /// full-speed devices, `max_packet_size` has to be one of 8, 16, 32 or 64.
     pub fn new(
         builder: &mut Builder<'d, D>,
@@ -1094,9 +1059,9 @@ where
     }
 }
 
-/// CDC ACM class packet sender.
+/// GS CAN class packet sender.
 ///
-/// You can obtain a `Sender` with [`CdcAcmClass::split`]
+/// You can obtain a `Sender` with [`GsCanClass::split`]
 pub struct Sender<'d, D: Driver<'d>> {
     write_ep: D::EndpointIn,
 }
@@ -1104,15 +1069,30 @@ pub struct Sender<'d, D: Driver<'d>> {
 impl<'d, D: Driver<'d>> Sender<'d, D> {
     /// Writes a single frame into the IN endpoint.
     pub async fn write_frame(&mut self, frame: &HostFrame) -> Result<(), EndpointError> {
-        // self.write_ep.write(data).await
-
         info!("Sending Frame");
 
-        // let buf = frame.as_bytes();
+        let max_package_size = self.write_ep.info().max_packet_size as usize;
 
-        // self.write_ep.write(&buf[0..31]).await?;
-        // self.write_ep.write(&buf[32..63]).await?;
-        // self.write_ep.write(&buf[64..]).await?;
+        let  buf = match frame{
+            HostFrame::ClassicTs(frame) => frame.as_bytes(),
+            HostFrame::FdTs(frame) => frame.as_bytes()
+        };
+
+        let mut transmited = 0usize;
+        let mut next_buffer_size = 0usize;
+        while transmited < buf.len(){
+            next_buffer_size = cmp::min(max_package_size, buf.len() - transmited);
+            self.write_ep.write(&buf[transmited..transmited + next_buffer_size]).await?;
+
+            transmited += next_buffer_size;
+        }
+
+        if next_buffer_size == max_package_size {
+            // This transmission of an empty package should be necessary if the last package had 
+            // exactly the buffer size to tell the host that the transmission is over.
+            self.write_ep.write(&[0u8;0]).await?;
+        }
+        
 
         Ok(())
     }
@@ -1123,36 +1103,14 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
     }
 }
 
-/// CDC ACM class packet receiver.
+/// GS CAN class packet receiver.
 ///
-/// You can obtain a `Receiver` with [`CdcAcmClass::split`]
+/// You can obtain a `Receiver` with [`GsCanClass::split`]
 pub struct Receiver<'d, D: Driver<'d>> {
     read_ep: D::EndpointOut,
 }
 
 impl<'d, D: Driver<'d>> Receiver<'d, D> {
-    // pub async fn read_frame(&mut self) -> Result<GsHostFrame, EndpointError> {
-    //     let mut buf = [0u8; 96];
-
-    //     info!("Receiving Frame");
-
-    //     self.read_ep.read(&mut buf[0..31]).await?;
-    //     info!("Received first buffer");
-
-    //     self.read_ep.read(&mut buf[32..63]).await?;
-    //     info!("Received first buffer");
-
-    //     self.read_ep.read(&mut buf[64..]).await?;
-
-    //     let re: Option<(Ref<_, GsHostFrame>, _)> = Ref::new_from_prefix(&mut buf[..]);
-
-    //     if let Some((frame, _buffer)) = re {
-    //         return Ok(frame.clone());
-    //     }
-
-    //     Err(EndpointError::BufferOverflow)
-    // }
-
     pub async fn read_frame(&mut self) -> Result<HostFrame, EndpointError> {
         let mut buf = [0u8; 128];
 
@@ -1174,13 +1132,21 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
             buf[..total_bytes]
         );
 
-        // let re: Option<(Ref<_, GsHostFrame>, _)> = Ref::new_from_prefix(&mut buf[..]);
+        if total_bytes == (size_of::<GsHostFrameClassic>()) {
+            let res: Option<(Ref<_, GsHostFrameClassicTs>, _)> = Ref::new_from_prefix(&mut buf[..]);
+            if let Some((frame, _)) = res {
+                info!("GsHostFrame: echo_id {}", frame.echo_id.get());
+                return Ok(HostFrame::ClassicTs(frame.clone()));
+            }
+        }
 
-        // if let Some((frame, _)) = re {
-        //     let clone = frame.clone();
-        //     info!("GsHostFrame: echo_id {}", clone.echo_id.get());
-        //     return Ok(clone);
-        // }
+        if total_bytes == (size_of::<GsHostFrameFd>()) {
+            let res: Option<(Ref<_, GsHostFrameFdTs>, _)> = Ref::new_from_prefix(&mut buf[..]);
+            if let Some((frame, _)) = res {
+                info!("GsHostFrame: echo_id {}", frame.echo_id.get());
+                return Ok(HostFrame::FdTs(frame.clone()));
+            }
+        }
 
         Err(EndpointError::BufferOverflow)
     }
