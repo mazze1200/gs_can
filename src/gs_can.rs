@@ -405,6 +405,34 @@ impl From<u8> for GsHostFrameFlags {
     }
 }
 
+pub fn dlc_to_len(dlc: u8) -> u8 {
+    match dlc {
+        0..=8 => dlc,
+        9 => 12,
+        10 => 16,
+        11 => 20,
+        12 => 24,
+        13 => 32,
+        14 => 48,
+        15 => 64,
+        _ => panic!("DLC > 15"),
+    }
+}
+
+pub fn len_to_dlc(len: u8) -> u8 {
+    match len {
+        0..=8 => len,
+        9..=12 => 9,
+        13..=16 => 10,
+        17..=20 => 11,
+        21..=24 => 12,
+        25..=32 => 13,
+        33..=48 => 14,
+        49..=64 => 15,
+        _ => panic!("DataLength > 64"),
+    }
+}
+
 // type CANID = U32;
 #[derive(AsBytes, FromZeroes, FromBytes, Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -577,7 +605,7 @@ impl HostFrame {
         if header.fdcan() {
             let mut hf = GsHostFrameFdTs::new_zeroed();
             hf.can_id = id;
-            hf.can_dlc = header.len();
+            hf.can_dlc = len_to_dlc(header.len());
             hf.channel = channel;
             hf.echo_id.set(echo_id);
             hf.timestamp.set(timestamp);
@@ -593,7 +621,7 @@ impl HostFrame {
         } else {
             let mut hf = GsHostFrameClassicTs::new_zeroed();
             hf.can_id = id;
-            hf.can_dlc = header.len();
+            hf.can_dlc = len_to_dlc(header.len());
             hf.channel = channel;
             hf.echo_id.set(echo_id);
             hf.timestamp.set(timestamp);
@@ -637,7 +665,7 @@ impl Into<FdFrame> for &HostFrame {
                             StandardId::new(frame.can_id.id() as u16).unwrap(),
                         )
                     },
-                    frame.can_dlc,
+                    dlc_to_len(frame.can_dlc),
                     frame.can_id.rtr(),
                 ),
                 &frame.data[..],
@@ -652,7 +680,7 @@ impl Into<FdFrame> for &HostFrame {
                             StandardId::new(frame.can_id.id() as u16).unwrap(),
                         )
                     },
-                    frame.can_dlc,
+                    dlc_to_len(frame.can_dlc),
                     frame.can_id.rtr(),
                     frame
                         .get_flags()
@@ -1069,26 +1097,27 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
 
         let max_package_size = self.write_ep.info().max_packet_size as usize;
 
-        let  buf = match frame{
+        let buf = match frame {
             HostFrame::ClassicTs(frame) => frame.as_bytes(),
-            HostFrame::FdTs(frame) => frame.as_bytes()
+            HostFrame::FdTs(frame) => frame.as_bytes(),
         };
 
         let mut transmited = 0usize;
         let mut next_buffer_size = 0usize;
-        while transmited < buf.len(){
+        while transmited < buf.len() {
             next_buffer_size = cmp::min(max_package_size, buf.len() - transmited);
-            self.write_ep.write(&buf[transmited..transmited + next_buffer_size]).await?;
+            self.write_ep
+                .write(&buf[transmited..transmited + next_buffer_size])
+                .await?;
 
             transmited += next_buffer_size;
         }
 
         if next_buffer_size == max_package_size {
-            // This transmission of an empty package should be necessary if the last package had 
+            // This transmission of an empty package should be necessary if the last package had
             // exactly the buffer size to tell the host that the transmission is over.
-            self.write_ep.write(&[0u8;0]).await?;
+            self.write_ep.write(&[0u8; 0]).await?;
         }
-        
 
         Ok(())
     }
@@ -1113,11 +1142,12 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         info!("Receiving Frame");
 
         let mut total_bytes = 0usize;
+        let max_packet_size = self.read_ep.info().max_packet_size as usize;
 
         loop {
             let read_bytes = self.read_ep.read(&mut buf[total_bytes..]).await?;
             total_bytes += read_bytes;
-            if read_bytes < self.read_ep.info().max_packet_size as usize {
+            if read_bytes < max_packet_size {
                 break;
             }
         }
@@ -1131,7 +1161,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         if total_bytes == (size_of::<GsHostFrameClassic>()) {
             let res: Option<(Ref<_, GsHostFrameClassicTs>, _)> = Ref::new_from_prefix(&mut buf[..]);
             if let Some((frame, _)) = res {
-                info!("GsHostFrame: echo_id {}", frame.echo_id.get());
+                info!("GsHostFrameClassic: echo_id {}", frame.echo_id.get());
                 return Ok(HostFrame::ClassicTs(frame.clone()));
             }
         }
@@ -1139,7 +1169,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         if total_bytes == (size_of::<GsHostFrameFd>()) {
             let res: Option<(Ref<_, GsHostFrameFdTs>, _)> = Ref::new_from_prefix(&mut buf[..]);
             if let Some((frame, _)) = res {
-                info!("GsHostFrame: echo_id {}", frame.echo_id.get());
+                info!("GsHostFrameFd: echo_id {}", frame.echo_id.get());
                 return Ok(HostFrame::FdTs(frame.clone()));
             }
         }
