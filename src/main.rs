@@ -284,15 +284,15 @@ async fn main(_spawner: Spawner) {
     let can_tx_event_stream_1 = create_can_tx_event_stream(can_tx_event_1, 1);
     let can_tx_event_stream_2 = create_can_tx_event_stream(can_tx_event_2, 2);
 
-    let can_tx_channel = Channel::<NoopRawMutex, (FdFrame, u8, u8), 6>::new();
+    let can_tx_channel = Channel::<NoopRawMutex, (FdFrame, u8, Option<u8>), 6>::new();
 
     let can_tx_fut = async {
         loop {
             let (frame, channel, echo_id) = can_tx_channel.receive().await;
             let tx_res = match channel {
-                0 => can_tx_0.write_fd_with_marker(&frame, Some(echo_id)).await,
-                1 => can_tx_1.write_fd_with_marker(&frame, Some(echo_id)).await,
-                2 => can_tx_2.write_fd_with_marker(&frame, Some(echo_id)).await,
+                0 => can_tx_0.write_fd_with_marker(&frame, echo_id).await,
+                1 => can_tx_1.write_fd_with_marker(&frame, echo_id).await,
+                2 => can_tx_2.write_fd_with_marker(&frame, echo_id).await,
                 _ => {
                     warn!("Invalid CAN channel {}", channel);
                     None
@@ -385,13 +385,14 @@ async fn main(_spawner: Spawner) {
     let usb_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
     let usb_tx_fut = async {
         loop {
-            usb_tx.wait_connection().await;
-            info!("USB TX connected");
-
             let frame = usb_tx_channel.receive().await;
-            let tx_res = usb_tx.write_frame(&frame).await;
-            if tx_res.is_err() {
-                warn!("Add error handling!");
+            if let Some(_) = usb_tx.wait_connection().now_or_never() {
+                info!("USB TX connected");
+
+                let tx_res = usb_tx.write_frame(&frame).await;
+                if tx_res.is_err() {
+                    warn!("Add error handling!");
+                }
             }
         }
     };
@@ -419,25 +420,6 @@ async fn main(_spawner: Spawner) {
 
                     usb_tx_channel.send(host_frame).await;
                 }
-                Event::UsbRx(frame) => {
-                    info!("Can Host Frame received");
-
-                    let can_frame: FdFrame = (&frame).into();
-
-                    let channel = frame.get_channel() as usize;
-                    let echo_id = frame.get_echo_id() as usize;
-                    if let Some(channel_host_frames) = host_frames.get_mut(channel) {
-                        if let Some(host_frame) = channel_host_frames.get_mut(echo_id) {
-                            *host_frame = Some(frame);
-                        }
-                    }
-
-                    can_tx_channel
-                        .send((can_frame, channel as u8, echo_id as u8))
-                        .await;
-
-                    warn!("Add error handling!");
-                }
                 Event::CanTx(echo_id, ts, channel) => {
                     info!("CanTx {}", echo_id);
 
@@ -457,6 +439,25 @@ async fn main(_spawner: Spawner) {
                     }
 
                     warn!("Add error handling!");
+                }
+                Event::UsbRx(frame) => {
+                    info!("USB CAN Host Frame received");
+
+                    let can_frame: FdFrame = (&frame).into();
+
+                    let channel = frame.get_channel() as usize;
+                    let echo_id = frame.get_echo_id() as usize;
+                    if let Some(channel_host_frames) = host_frames.get_mut(channel) {
+                        if channel_host_frames.get(echo_id).is_none() {
+                            channel_host_frames[echo_id] = Some(frame);
+                        } else {
+                            warn!("Add error handling!");
+                        }
+                    }
+
+                    can_tx_channel
+                        .send((can_frame, channel as u8, Some(echo_id as u8)))
+                        .await;
                 }
             }
         }
