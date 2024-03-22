@@ -9,7 +9,7 @@ use defmt_rtt as _;
 use embassy_executor::Spawner;
 
 use embassy_stm32::can::frame::FdFrame;
-use embassy_stm32::can::{FdcanControl, FdcanRx, FdcanTxEvent, Instance};
+use embassy_stm32::can::{FdCanConfiguration, FdcanControl, FdcanRx, FdcanTxEvent, Instance};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::usb_otg::Driver;
@@ -59,54 +59,42 @@ impl GsCanHandlers for CanHandler {
 
     fn set_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming) {
         if let Some(bit_timing) = Into::<Option<can::config::NominalBitTiming>>::into(timing) {
-            match channel {
-                0 => {
-                    self.can_cnt_0.into_config_mode();
-                    self.can_cnt_0.set_bitrate(bit_timing);
-                    self.can_cnt_0
-                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
-                }
-                1 => {
-                    self.can_cnt_1.into_config_mode();
-                    self.can_cnt_1.set_bitrate(bit_timing);
-                    self.can_cnt_1
-                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
-                }
-                2 => {
-                    self.can_cnt_2.into_config_mode();
-                    self.can_cnt_2.set_bitrate(bit_timing);
-                    self.can_cnt_2
-                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
-                }
-                _ => {}
+            let channel: Option<&mut dyn can::FdCanConfiguration> = match channel {
+                0 => Some(&mut self.can_cnt_0),
+                1 => Some(&mut self.can_cnt_1),
+                2 => Some(&mut self.can_cnt_2),
+                _ => None,
             };
+
+            if let Some(channel) = channel {
+                let current_timing = channel.get_config().get_nominal_bit_timing();
+                if current_timing != bit_timing {
+                    channel.into_config_mode();
+                    channel.set_bitrate(bit_timing);
+                    channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
+                }
+            }
         }
     }
 
     fn set_data_bittiming(&mut self, channel: u16, timing: &GsDeviceBittiming) {
         if let Some(data_bit_timing) = Into::<Option<can::config::DataBitTiming>>::into(timing) {
-            match channel {
-                0 => {
-                    self.can_cnt_0.into_config_mode();
-                    self.can_cnt_0.set_fd_data_bitrate(data_bit_timing);
-                    self.can_cnt_0
-                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
+            let channel: Option<&mut dyn can::FdCanConfiguration> = match channel {
+                0 => Some(&mut self.can_cnt_0),
+                1 => Some(&mut self.can_cnt_1),
+                2 => Some(&mut self.can_cnt_2),
+                _ => None,
+            };
+
+            if let Some(channel) = channel {
+                let current_timing = channel.get_config().get_data_bit_timing();
+                if current_timing != data_bit_timing {
+                    channel.into_config_mode();
+                    channel.set_fd_data_bitrate(data_bit_timing);
+                    channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
                 }
-                1 => {
-                    self.can_cnt_1.into_config_mode();
-                    self.can_cnt_1.set_fd_data_bitrate(data_bit_timing);
-                    self.can_cnt_1
-                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
-                }
-                2 => {
-                    self.can_cnt_2.into_config_mode();
-                    self.can_cnt_2.set_fd_data_bitrate(data_bit_timing);
-                    self.can_cnt_2
-                        .start(can::FdcanOperatingMode::InternalLoopbackMode);
-                }
-                _ => {}
             }
-        };
+        }
     }
 
     fn get_bittiming(&self, channel: u16, timing: &mut gs_can::GsDeviceBtConst) {
