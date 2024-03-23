@@ -69,6 +69,7 @@ impl GsCanHandlers for CanHandler {
             if let Some(channel) = channel {
                 let current_timing = channel.get_config().get_nominal_bit_timing();
                 if current_timing != bit_timing {
+                    info!("New Bit Timing {}", bit_timing);
                     channel.into_config_mode();
                     channel.set_bitrate(bit_timing);
                     channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
@@ -89,6 +90,7 @@ impl GsCanHandlers for CanHandler {
             if let Some(channel) = channel {
                 let current_timing = channel.get_config().get_data_bit_timing();
                 if current_timing != data_bit_timing {
+                    info!("New Data Bit Timing {}", data_bit_timing);
                     channel.into_config_mode();
                     channel.set_fd_data_bitrate(data_bit_timing);
                     channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
@@ -128,27 +130,16 @@ impl GsCanHandlers for CanHandler {
                     | GsDeviceBtConstFeature::GsCanFeatureLoopBack
                     | GsDeviceBtConstFeature::GsCanFeatureIdentify,
             );
-
+ 
             timing.fclk_can.set(frequency.0);
             timing.tseg1_min.set(1);
-            timing.tseg1_max.set(255);
+            timing.tseg1_max.set(256);
             timing.tseg2_min.set(1);
-            timing.tseg2_max.set(127);
-            timing.sjw_max.set(127);
+            timing.tseg2_max.set(128);
+            timing.sjw_max.set(128);
             timing.brp_min.set(1);
-            timing.brp_max.set(511);
+            timing.brp_max.set(512);
             timing.brp_inc.set(1);
-
-            /*
-                        .tseg1_min = 1,
-            .tseg1_max = 16,
-            .tseg2_min = 1,
-            .tseg2_max = 8,
-            .sjw_max = 4,
-            .brp_min = 1,
-            .brp_max = 1024,
-            .brp_inc = 1,
-                     */
         }
     }
 
@@ -167,21 +158,21 @@ impl GsCanHandlers for CanHandler {
             );
             timing.fclk_can.set(frequency.0);
             timing.tseg1_min.set(1);
-            timing.tseg1_max.set(255);
+            timing.tseg1_max.set(256);
             timing.tseg2_min.set(1);
-            timing.tseg2_max.set(127);
-            timing.sjw_max.set(127);
+            timing.tseg2_max.set(128);
+            timing.sjw_max.set(128);
             timing.brp_min.set(1);
-            timing.brp_max.set(511);
+            timing.brp_max.set(512);
             timing.brp_inc.set(1);
 
             timing.dtseg1_min.set(1);
-            timing.dtseg1_max.set(31);
+            timing.dtseg1_max.set(32);
             timing.dtseg2_min.set(1);
-            timing.dtseg2_max.set(15);
-            timing.dsjw_max.set(15);
+            timing.dtseg2_max.set(16);
+            timing.dsjw_max.set(16);
             timing.dbrp_min.set(1);
-            timing.dbrp_max.set(31);
+            timing.dbrp_max.set(32);
             timing.dbrp_inc.set(1);
         }
     }
@@ -205,7 +196,9 @@ fn create_can_rx_stream<'d, I: Instance>(
             let res = rx.read_fd().await;
             match res {
                 Ok((msg, ts)) => return Some((Event::CanRx(msg, ts, index), (rx, index))),
-                Err(_) => {}
+                Err(_) => {
+                    info!("handle CAN Bus errors");
+                }
             }
         }
     })
@@ -213,11 +206,14 @@ fn create_can_rx_stream<'d, I: Instance>(
 
 fn create_can_tx_event_stream<I: Instance>(
     can: FdcanTxEvent<I>,
-    can_index: u8,
+    can_channel: u8,
 ) -> impl futures::Stream<Item = Event> {
-    unfold((can, can_index), |(mut rx, index)| async move {
+    unfold((can, can_channel), |(mut rx, can_channel)| async move {
         let (_header, marker, timestamp) = rx.read_tx_event().await;
-        Some((Event::CanTx(marker, timestamp, index), (rx, index)))
+        Some((
+            Event::CanTx(marker, timestamp, can_channel),
+            (rx, can_channel),
+        ))
     })
 }
 
@@ -263,6 +259,9 @@ async fn main(_spawner: Spawner) {
     can0.set_fd_data_bitrate(4_000_000, true);
     let can0 = can0.into_internal_loopback_mode();
     let (mut can_tx_0, can_rx_0, can_tx_event_0, can_cnt_0) = can0.split_with_control();
+
+    info!("CAN 0 Bit Timing {}", can_cnt_0.get_config().get_nominal_bit_timing());
+    info!("CAN 0 Data Bit Timing {}", can_cnt_0.get_config().get_data_bit_timing());
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
