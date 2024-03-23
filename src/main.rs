@@ -276,7 +276,7 @@ async fn main(_spawner: Spawner) {
         can_cnt_0.get_config().get_data_bit_timing()
     );
 
-    let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
+    let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB12, p.PB6, Irqs);
     can1.set_bitrate(500_000);
     can1.set_fd_data_bitrate(4_000_000, true);
     let can1 = can1.into_normal_mode();
