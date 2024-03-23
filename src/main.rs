@@ -130,7 +130,7 @@ impl GsCanHandlers for CanHandler {
                     | GsDeviceBtConstFeature::GsCanFeatureLoopBack
                     | GsDeviceBtConstFeature::GsCanFeatureIdentify,
             );
- 
+
             timing.fclk_can.set(frequency.0);
             timing.tseg1_min.set(1);
             timing.tseg1_max.set(256);
@@ -260,8 +260,14 @@ async fn main(_spawner: Spawner) {
     let can0 = can0.into_internal_loopback_mode();
     let (mut can_tx_0, can_rx_0, can_tx_event_0, can_cnt_0) = can0.split_with_control();
 
-    info!("CAN 0 Bit Timing {}", can_cnt_0.get_config().get_nominal_bit_timing());
-    info!("CAN 0 Data Bit Timing {}", can_cnt_0.get_config().get_data_bit_timing());
+    info!(
+        "CAN 0 Bit Timing {}",
+        can_cnt_0.get_config().get_nominal_bit_timing()
+    );
+    info!(
+        "CAN 0 Data Bit Timing {}",
+        can_cnt_0.get_config().get_data_bit_timing()
+    );
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
@@ -440,17 +446,25 @@ async fn main(_spawner: Spawner) {
                     warn!("Add error handling!");
                 }
                 Event::UsbRx(frame) => {
-                    info!("USB CAN Host Frame received");
-
                     let can_frame: FdFrame = (&frame).into();
 
                     let channel = frame.get_channel() as usize;
                     let echo_id = frame.get_echo_id() as usize;
+
+                    info!(
+                        "USB CAN Host Frame received. Channel: {}, Echo ID: {}",
+                        channel, echo_id
+                    );
+
                     if let Some(channel_host_frames) = host_frames.get_mut(channel) {
-                        if channel_host_frames.get(echo_id).is_none() {
-                            channel_host_frames[echo_id] = Some(frame);
+                        if let Some(host_frame) = channel_host_frames.get(echo_id) {
+                            if host_frame.is_none() {
+                                channel_host_frames[echo_id] = Some(frame);
+                            } else {
+                                warn!("UsbRx | Echo ID already in buffer. That should not happen");
+                            }
                         } else {
-                            warn!("Add error handling!");
+                            warn!("UsbRx | Echo ID out of bounds!");
                         }
                     }
 
