@@ -72,7 +72,7 @@ impl GsCanHandlers for CanHandler {
                     debug!("New Bit Timing {}", bit_timing);
                     channel.into_config_mode();
                     channel.set_bitrate(bit_timing);
-                    channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
+                    channel.start(can::FdcanOperatingMode::NormalOperationMode);
                 }
             }
         }
@@ -93,7 +93,7 @@ impl GsCanHandlers for CanHandler {
                     debug!("New Data Bit Timing {}", data_bit_timing);
                     channel.into_config_mode();
                     channel.set_fd_data_bitrate(data_bit_timing);
-                    channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
+                    channel.start(can::FdcanOperatingMode::NormalOperationMode);
                 }
             }
         }
@@ -264,7 +264,7 @@ async fn main(_spawner: Spawner) {
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(4_000_000, true);
-    let can0 = can0.into_internal_loopback_mode();
+    let can0 = can0.into_normal_mode();
     let (mut can_tx_0, can_rx_0, can_tx_event_0, can_cnt_0) = can0.split_with_control();
 
     debug!(
@@ -279,13 +279,13 @@ async fn main(_spawner: Spawner) {
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB5, p.PB6, Irqs);
     can1.set_bitrate(500_000);
     can1.set_fd_data_bitrate(4_000_000, true);
-    let can1 = can1.into_internal_loopback_mode();
+    let can1 = can1.into_normal_mode();
     let (mut can_tx_1, can_rx_1, can_tx_event_1, can_cnt_1) = can1.split_with_control();
 
-    let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PG10, p.PG9, Irqs);
+    let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PF6, p.PF7, Irqs);
     can2.set_bitrate(500_000);
     can2.set_fd_data_bitrate(4_000_000, true);
-    let can2 = can2.into_internal_loopback_mode();
+    let can2 = can2.into_normal_mode();
     let (mut can_tx_2, can_rx_2, can_tx_event_2, can_cnt_2) = can2.split_with_control();
 
     let can_rx_stream_0 = create_can_rx_stream(can_rx_0, 0);
