@@ -419,14 +419,21 @@ async fn main(_spawner: Spawner) {
         while let Some(event) = selectors.next().await {
             match event {
                 Event::CanRx(frame, ts, channel) => {
-                    info!("CanRx {}", ts);
+                    info!(
+                        "CanRx | CAN Frame received. Channel: {}, Timestamp: {}",
+                        channel, ts
+                    );
+
                     let host_frame =
                         HostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
                     usb_tx_channel.send(host_frame).await;
                 }
                 Event::CanTx(echo_id, ts, channel) => {
-                    info!("CanTx {}", echo_id);
+                    info!(
+                        "CanTx | CAN Frame Transmitted. Channel: {}, Timestamp: {}, Echo ID {}",
+                        channel, ts, echo_id
+                    );
 
                     if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
                         if let Some(host_frame) = channel_host_frames.get_mut((echo_id) as usize) {
@@ -436,7 +443,7 @@ async fn main(_spawner: Spawner) {
 
                                 usb_tx_channel.send(frame).await;
                             } else {
-                                warn!("here should be a frame but isn't!");
+                                warn!("CanTx | Here should be a frame but isn't!");
                             }
 
                             continue;
@@ -452,7 +459,7 @@ async fn main(_spawner: Spawner) {
                     let echo_id = frame.get_echo_id() as usize;
 
                     info!(
-                        "USB CAN Host Frame received. Channel: {}, Echo ID: {}",
+                        "UsbRx | Host Frame received. Channel: {}, Echo ID: {}",
                         channel, echo_id
                     );
 
