@@ -960,7 +960,7 @@ impl<'d> Handler for Control<'d> {
             }
             Some(GsUsbRequestType::GsUsbBreqGetState) => {
                 let data: Option<(Ref<_, GsDeviceState>, _)> = Ref::new_from_prefix(&mut *buf);
-                debug("GsUsbBreqGetState");
+                debug!("GsUsbBreqGetState");
 
                 match data {
                     Some((_device_state, _)) => {
