@@ -69,7 +69,7 @@ impl GsCanHandlers for CanHandler {
             if let Some(channel) = channel {
                 let current_timing = channel.get_config().get_nominal_bit_timing();
                 if current_timing != bit_timing {
-                    info!("New Bit Timing {}", bit_timing);
+                    debug!("New Bit Timing {}", bit_timing);
                     channel.into_config_mode();
                     channel.set_bitrate(bit_timing);
                     channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
@@ -90,7 +90,7 @@ impl GsCanHandlers for CanHandler {
             if let Some(channel) = channel {
                 let current_timing = channel.get_config().get_data_bit_timing();
                 if current_timing != data_bit_timing {
-                    info!("New Data Bit Timing {}", data_bit_timing);
+                    debug!("New Data Bit Timing {}", data_bit_timing);
                     channel.into_config_mode();
                     channel.set_fd_data_bitrate(data_bit_timing);
                     channel.start(can::FdcanOperatingMode::InternalLoopbackMode);
@@ -189,13 +189,20 @@ pub enum Event {
 
 fn create_can_rx_stream<'d, I: Instance>(
     can: FdcanRx<'d, I>,
-    can_index: u8,
+    can_channel: u8,
 ) -> impl futures::Stream<Item = Event> + 'd {
-    unfold((can, can_index), |(mut rx, index)| async move {
+    unfold((can, can_channel), |(mut rx, can_channel)| async move {
         loop {
             let res = rx.read_fd().await;
             match res {
-                Ok((msg, ts)) => return Some((Event::CanRx(msg, ts, index), (rx, index))),
+                Ok((frame, ts)) => {
+                    debug!(
+                        "Received CAN Frame |  Channel: {}, Header: {}",
+                        can_channel,
+                        frame.header()
+                    );
+                    return Some((Event::CanRx(frame, ts, can_channel), (rx, can_channel)));
+                }
                 Err(_) => {
                     info!("handle CAN Bus errors");
                 }
@@ -260,11 +267,11 @@ async fn main(_spawner: Spawner) {
     let can0 = can0.into_internal_loopback_mode();
     let (mut can_tx_0, can_rx_0, can_tx_event_0, can_cnt_0) = can0.split_with_control();
 
-    info!(
+    debug!(
         "CAN 0 Bit Timing {}",
         can_cnt_0.get_config().get_nominal_bit_timing()
     );
-    info!(
+    debug!(
         "CAN 0 Data Bit Timing {}",
         can_cnt_0.get_config().get_data_bit_timing()
     );
@@ -376,9 +383,9 @@ async fn main(_spawner: Spawner) {
 
     let usb_rx = pin!(stream::unfold(usb_rx, |mut usb_rx| async move {
         usb_rx.wait_connection().await;
-        info!("USB RX connected");
+        debug!("USB RX connected");
         let frame = usb_rx.read_frame().await;
-        info!("Read Frame from USB");
+        debug!("Read Frame from USB");
         match frame {
             Ok(frame) => return Some((Event::UsbRx(frame), usb_rx)),
             Err(error) => warn!("Invalid Frame: Error {:?}", error),
@@ -392,7 +399,7 @@ async fn main(_spawner: Spawner) {
         loop {
             let frame = usb_tx_channel.receive().await;
             if let Some(_) = usb_tx.wait_connection().now_or_never() {
-                info!("USB TX connected");
+                debug!("USB TX connected");
 
                 let tx_res = usb_tx.write_frame(&frame).await;
                 if tx_res.is_err() {
@@ -419,7 +426,7 @@ async fn main(_spawner: Spawner) {
         while let Some(event) = selectors.next().await {
             match event {
                 Event::CanRx(frame, ts, channel) => {
-                    info!(
+                    debug!(
                         "CanRx | CAN Frame received. Channel: {}, Timestamp: {}",
                         channel, ts
                     );
@@ -430,7 +437,7 @@ async fn main(_spawner: Spawner) {
                     usb_tx_channel.send(host_frame).await;
                 }
                 Event::CanTx(echo_id, ts, channel) => {
-                    info!(
+                    debug!(
                         "CanTx | CAN Frame Transmitted. Channel: {}, Timestamp: {}, Echo ID {}",
                         channel, ts, echo_id
                     );
@@ -458,7 +465,7 @@ async fn main(_spawner: Spawner) {
                     let channel = frame.get_channel() as usize;
                     let echo_id = frame.get_echo_id() as usize;
 
-                    info!(
+                    debug!(
                         "UsbRx | Host Frame received. Channel: {}, Echo ID: {}",
                         channel, echo_id
                     );
