@@ -671,26 +671,48 @@ impl Into<FdFrame> for &HostFrame {
                 &frame.data[..],
             )
             .unwrap(),
-            HostFrame::FdTs(frame) => FdFrame::new(
-                Header::new_fd(
-                    if frame.can_id.extended() {
-                        embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
-                    } else {
-                        embedded_can::Id::Standard(
-                            StandardId::new(frame.can_id.id() as u16).unwrap(),
-                        )
-                    },
-                    dlc_to_len(frame.can_dlc),
-                    frame.can_id.rtr(),
-                    frame
-                        .get_flags()
-                        .unwrap()
-                        .0
-                        .contains(GsHostFrameFlag::GsCanFlagBrs),
-                ),
-                &frame.data[..],
-            )
-            .unwrap(),
+            HostFrame::FdTs(frame) => match frame
+                .get_flags()
+                .unwrap()
+                .0
+                .contains(GsHostFrameFlag::GsCanFlagFd)
+            {
+                true => FdFrame::new(
+                    Header::new_fd(
+                        if frame.can_id.extended() {
+                            embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
+                        } else {
+                            embedded_can::Id::Standard(
+                                StandardId::new(frame.can_id.id() as u16).unwrap(),
+                            )
+                        },
+                        dlc_to_len(frame.can_dlc),
+                        frame.can_id.rtr(),
+                        frame
+                            .get_flags()
+                            .unwrap()
+                            .0
+                            .contains(GsHostFrameFlag::GsCanFlagBrs),
+                    ),
+                    &frame.data[..],
+                )
+                .unwrap(),
+                false => FdFrame::new(
+                    Header::new(
+                        if frame.can_id.extended() {
+                            embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
+                        } else {
+                            embedded_can::Id::Standard(
+                                StandardId::new(frame.can_id.id() as u16).unwrap(),
+                            )
+                        },
+                        dlc_to_len(frame.can_dlc),
+                        frame.can_id.rtr(),
+                    ),
+                    &frame.data[..8],
+                )
+                .unwrap(),
+            },
         }
     }
 }
@@ -763,11 +785,11 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqHostFormat) => {
                 let data: Option<(Ref<_, GsHostConfig>, _)> = Ref::new_from_prefix(data);
 
-                info!("GsUsbBreqHostFormat");
+                debug!("GsUsbBreqHostFormat");
 
                 match data {
                     Some((host_config, _)) => {
-                        info!(
+                        debug!(
                             "Received Host Config: {:#010x}",
                             host_config.byte_order.get()
                         );
@@ -782,7 +804,7 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqMode) => {
                 let data: Option<(Ref<_, GsDeviceMode>, _)> = Ref::new_from_prefix(data);
 
-                info!("GsUsbBreqMode");
+                debug!("GsUsbBreqMode");
                 match data {
                     Some((mode, _)) => {
                         match mode.get_mode() {
@@ -805,10 +827,10 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
 
-                info!("GsUsbBreqBittiming");
+                debug!("GsUsbBreqBittiming");
                 match data {
                     Some((bit_timing, _)) => {
-                        info!("Set bit timing for CAN {}", req.value);
+                        debug!("Set bit timing for CAN {}", req.value);
                         self.can_handlers.set_bittiming(req.value, &bit_timing);
                         Some(OutResponse::Accepted)
                     }
@@ -821,10 +843,10 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqDataBittiming) => {
                 let data: Option<(Ref<_, GsDeviceBittiming>, _)> = Ref::new_from_prefix(data);
 
-                info!("GsUsbBreqDataBittiming");
+                debug!("GsUsbBreqDataBittiming");
                 match data {
                     Some((data_bit_timing, _)) => {
-                        info!("Set data_bittiming for CAN {}", req.value);
+                        debug!("Set data_bittiming for CAN {}", req.value);
                         self.can_handlers
                             .set_data_bittiming(req.value, &data_bit_timing);
                         Some(OutResponse::Accepted)
@@ -838,10 +860,10 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqIdentify) => {
                 let data: Option<(Ref<_, GsIdentifyMode>, _)> = Ref::new_from_prefix(data);
 
-                info!("GsUsbBreqIdentify");
+                debug!("GsUsbBreqIdentify");
                 match data {
                     Some((_identify_mode, _)) => {
-                        info!("todo");
+                        debug!("todo");
                         Some(OutResponse::Accepted)
                     }
                     None => {
@@ -854,7 +876,7 @@ impl<'d> Handler for Control<'d> {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(data);
 
-                info!("GsUsbBreqSetTermination");
+                debug!("GsUsbBreqSetTermination");
                 match data {
                     Some((_termination_state, _)) => {
                         info!("todo");
@@ -897,7 +919,7 @@ impl<'d> Handler for Control<'d> {
         match FromPrimitive::from_u8(req.request) {
             Some(GsUsbRequestType::GsUsbBreqDeviceConfig) => {
                 let data: Option<(Ref<_, GsDeviceConfig>, _)> = Ref::new_from_prefix(&mut *buf);
-                info!("GsUsbBreqDeviceConfig");
+                debug!("GsUsbBreqDeviceConfig");
 
                 match data {
                     Some((mut device_config, _)) => {
@@ -911,38 +933,38 @@ impl<'d> Handler for Control<'d> {
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
-                        info!("unaligned buffer for: GS_USB_BREQ_DEVICE_CONFIG");
+                        warn!("unaligned buffer for: GS_USB_BREQ_DEVICE_CONFIG");
                         Some(InResponse::Rejected)
                     }
                 }
             }
             Some(GsUsbRequestType::GsUsbBreqTimestamp) => {
                 let data: Option<(Ref<_, GsTimestamp>, _)> = Ref::new_from_prefix(&mut *buf);
-                info!("GsUsbBreqTimestamp");
+                debug!("GsUsbBreqTimestamp");
 
                 match data {
                     Some((mut timestamp, _)) => {
                         let ts = self.can_handlers.get_timestamp();
 
-                        info!("Send Timestamp {}", ts.as_micros() as u32);
+                        debug!("Send Timestamp {}", ts.as_micros() as u32);
                         timestamp.timestamp.set(ts.as_micros() as u32);
                         // timestamp.timestamp.set(0);
 
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
-                        info!("unaligned buffer for: GS_USB_BREQ_TIMESTAMP");
+                        warn!("unaligned buffer for: GS_USB_BREQ_TIMESTAMP");
                         Some(InResponse::Rejected)
                     }
                 }
             }
             Some(GsUsbRequestType::GsUsbBreqGetState) => {
                 let data: Option<(Ref<_, GsDeviceState>, _)> = Ref::new_from_prefix(&mut *buf);
-                info!("GsUsbBreqGetState");
+                debug("GsUsbBreqGetState");
 
                 match data {
                     Some((_device_state, _)) => {
-                        info!("Not implemented. This is dependant on the feature GsCanFeatureGetState");
+                        warn!("Not implemented. This is dependant on the feature GsCanFeatureGetState");
                         Some(InResponse::Rejected)
                         // device_state.rxerr.set(0);
                         // device_state.txerr.set(0);
@@ -950,7 +972,7 @@ impl<'d> Handler for Control<'d> {
                         // Some(InResponse::Accepted(device_state.into_ref().as_bytes()))
                     }
                     None => {
-                        info!("unaligned buffer for: GS_USB_BREQ_GET_STATE");
+                        warn!("unaligned buffer for: GS_USB_BREQ_GET_STATE");
                         Some(InResponse::Rejected)
                     }
                 }
@@ -958,23 +980,23 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqGetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(&mut *buf);
-                info!("GsUsbBreqGetTermination");
+                    debug!("GsUsbBreqGetTermination");
 
                 match data {
                     Some((_terminaton_state, _)) => {
-                        info!("Not implemented. This is dependant on the feature GsCanFeatureGetState");
+                        warn!("Not implemented. This is dependant on the feature GsCanFeatureGetState");
                         Some(InResponse::Rejected)
                         // Some(InResponse::Accepted(buf))
                     }
                     None => {
-                        info!("unaligned buffer for: GS_USB_BREQ_GET_TERMINATION");
+                        warn!("unaligned buffer for: GS_USB_BREQ_GET_TERMINATION");
                         Some(InResponse::Rejected)
                     }
                 }
             }
             Some(GsUsbRequestType::GsUsbBreqBtConst) => {
                 let data: Option<(Ref<_, GsDeviceBtConst>, _)> = Ref::new_from_prefix(&mut *buf);
-                info!("GsUsbBreqBtConst");
+                debug!("GsUsbBreqBtConst");
 
                 match data {
                     Some((mut bt_const, _)) => {
@@ -982,13 +1004,13 @@ impl<'d> Handler for Control<'d> {
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
-                        info!("unaligned buffer for: GS_USB_BREQ_BT_CONST");
+                        warn!("unaligned buffer for: GS_USB_BREQ_BT_CONST");
                         Some(InResponse::Rejected)
                     }
                 }
             }
             Some(GsUsbRequestType::GsUsbBreqBtConstExt) => {
-                info!("GsUsbBreqBtConstExt");
+                debug!("GsUsbBreqBtConstExt");
 
                 let data: Option<(Ref<_, GsDeviceBtConstExtended>, _)> =
                     Ref::new_from_prefix(&mut *buf);
@@ -1000,7 +1022,7 @@ impl<'d> Handler for Control<'d> {
                         Some(InResponse::Accepted(buf))
                     }
                     None => {
-                        info!("unaligned buffer for: GS_USB_BREQ_BT_CONST_EXT");
+                        warn!("unaligned buffer for: GS_USB_BREQ_BT_CONST_EXT");
                         Some(InResponse::Rejected)
                     }
                 }
@@ -1093,7 +1115,7 @@ pub struct Sender<'d, D: Driver<'d>> {
 impl<'d, D: Driver<'d>> Sender<'d, D> {
     /// Writes a single frame into the IN endpoint.
     pub async fn write_frame(&mut self, frame: &HostFrame) -> Result<(), EndpointError> {
-        info!("Sending Frame");
+        debug!("Sending Frame");
 
         let max_package_size = self.write_ep.info().max_packet_size as usize;
 
@@ -1139,7 +1161,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
     pub async fn read_frame(&mut self) -> Result<HostFrame, EndpointError> {
         let mut buf = [0u8; 128];
 
-        info!("Receiving Frame");
+        debug!("Receiving Frame");
 
         let mut total_bytes = 0usize;
         let max_packet_size = self.read_ep.info().max_packet_size as usize;
@@ -1152,7 +1174,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
             }
         }
 
-        info!(
+        debug!(
             "Received buffer len: {} | {:?}",
             total_bytes,
             buf[..total_bytes]
@@ -1161,7 +1183,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         if total_bytes == (size_of::<GsHostFrameClassic>()) {
             let res: Option<(Ref<_, GsHostFrameClassicTs>, _)> = Ref::new_from_prefix(&mut buf[..]);
             if let Some((frame, _)) = res {
-                info!("GsHostFrameClassic: echo_id {}", frame.echo_id.get());
+                debug!("GsHostFrameClassic: echo_id {}", frame.echo_id.get());
                 return Ok(HostFrame::ClassicTs(frame.clone()));
             }
         }
@@ -1169,7 +1191,7 @@ impl<'d, D: Driver<'d>> Receiver<'d, D> {
         if total_bytes == (size_of::<GsHostFrameFd>()) {
             let res: Option<(Ref<_, GsHostFrameFdTs>, _)> = Ref::new_from_prefix(&mut buf[..]);
             if let Some((frame, _)) = res {
-                info!("GsHostFrameFd: echo_id {}", frame.echo_id.get());
+                debug!("GsHostFrameFd: echo_id {}", frame.echo_id.get());
                 return Ok(HostFrame::FdTs(frame.clone()));
             }
         }
