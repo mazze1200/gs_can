@@ -80,6 +80,7 @@ impl<'d, T: CaptureCompare16bitInstance> SimplePwm32<'d, T> {
         let this = Self { inner: tim };
 
         this.inner.set_frequency(freq);
+        this.inner.set_autoreload_preload(true);
         this.inner.start();
 
         let r = T::regs_gp16();
