@@ -7,7 +7,6 @@ use embassy_stm32::can;
 
 use defmt_rtt as _;
 
-
 pub struct CanControlHandler {
     can_cnt_0: FdcanControl<FDCAN1>,
     can_cnt_1: FdcanControl<FDCAN2>,
@@ -15,11 +14,15 @@ pub struct CanControlHandler {
 }
 
 impl CanControlHandler {
-    pub fn new(can_cnt_0: FdcanControl<FDCAN1>,  can_cnt_1: FdcanControl<FDCAN2>, can_cnt_2: FdcanControl<FDCAN3>,) -> Self {
-        CanControlHandler{
+    pub fn new(
+        can_cnt_0: FdcanControl<FDCAN1>,
+        can_cnt_1: FdcanControl<FDCAN2>,
+        can_cnt_2: FdcanControl<FDCAN3>,
+    ) -> Self {
+        CanControlHandler {
             can_cnt_0,
             can_cnt_1,
-            can_cnt_2
+            can_cnt_2,
         }
     }
 }
@@ -86,14 +89,6 @@ impl GsCanHandlers for CanControlHandler {
                     GS_CAN_FEATURE_IDENTIFY |
                     GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE
             */
-
-            // timing.set_features(
-            //     GsDeviceBtConstFeature::GsCanFeatureFd
-            //         | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-            //         | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
-            //         | GsDeviceBtConstFeature::GsCanFeatureListenOnly,
-            // );
-
             timing.set_features(
                 GsDeviceBtConstFeature::GsCanFeatureFd
                     | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
@@ -125,9 +120,12 @@ impl GsCanHandlers for CanControlHandler {
             timing.set_features(
                 GsDeviceBtConstFeature::GsCanFeatureFd
                     | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
+                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly
                     | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
-                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly,
+                    | GsDeviceBtConstFeature::GsCanFeatureLoopBack
+                    | GsDeviceBtConstFeature::GsCanFeatureIdentify,
             );
+
             timing.fclk_can.set(frequency.0);
             timing.tseg1_min.set(1);
             timing.tseg1_max.set(256);

@@ -16,7 +16,7 @@ use embassy_stm32::rcc::low_level::RccPeripheral;
 use embassy_stm32::time::{khz, mhz};
 use embassy_stm32::timer::low_level::CoreInstance;
 use embassy_stm32::usb_otg::Driver;
-use embassy_stm32::{bind_interrupts, peripherals, timer, usb_otg, Config};
+use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
 use embassy_time::{Instant, Timer};
 
 use embassy_stm32::can;
@@ -138,10 +138,10 @@ async fn main(_spawner: Spawner) {
     let tim3 = p.TIM3;
     TIM3::enable_and_reset();
 
-    let core_freq = embassy_stm32::peripherals::TIM3::frequency().0;
+    let core_freq = TIM3::frequency().0;
     info!("Timer core Freq: {}", core_freq);
 
-    let mut regs = TIM3::regs_core();
+    let regs = TIM3::regs_core();
 
     // The PSC is a devider for the timer core clock. The hardware automatically adds +1.
     regs.psc().modify(|r| r.set_psc(191));
@@ -150,9 +150,18 @@ async fn main(_spawner: Spawner) {
         .modify(|r| r.set_urs(embassy_stm32::pac::timer::vals::Urs::COUNTERONLY));
     regs.egr().write(|r| r.set_ug(true));
 
+    let r = <TIM3 as embassy_stm32::timer::low_level::GeneralPurpose16bitInstance>::regs_gp16();
+    r.ccmr_output(0).modify(|w| {
+        w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+        w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+    });
+
+    r.ccmr_output(1).modify(|w| {
+        w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+        w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+    });
+
     tim3.start();
-
-
 
 
     // create can
