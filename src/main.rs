@@ -123,7 +123,7 @@ async fn main(_spawner: Spawner) {
             divr: None,
         });
         config.rcc.sys = Sysclk::PLL1_P; // 384 Mhz
-        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 192 Mhz
+        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 192 Mhz, also the clock for timer 3 (TIM3)
         config.rcc.apb1_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.apb2_pre = APBPrescaler::DIV2; // 96 Mhz
         config.rcc.apb3_pre = APBPrescaler::DIV2; // 96 Mhz
@@ -141,7 +141,7 @@ async fn main(_spawner: Spawner) {
     let core_freq = TIM3::frequency().0;
     info!("Timer core Freq: {}", core_freq);
 
-    let regs = TIM3::regs_core();
+    let regs = <TIM3 as embassy_stm32::timer::low_level::GeneralPurpose16bitInstance>::regs_gp16();
 
     // The PSC is a devider for the timer core clock. The hardware automatically adds +1.
     regs.psc().modify(|r| r.set_psc(191));
@@ -150,19 +150,18 @@ async fn main(_spawner: Spawner) {
         .modify(|r| r.set_urs(embassy_stm32::pac::timer::vals::Urs::COUNTERONLY));
     regs.egr().write(|r| r.set_ug(true));
 
-    let r = <TIM3 as embassy_stm32::timer::low_level::GeneralPurpose16bitInstance>::regs_gp16();
-    r.ccmr_output(0).modify(|w| {
+    
+    regs.ccmr_output(0).modify(|w| {
         w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
         w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
     });
 
-    r.ccmr_output(1).modify(|w| {
+    regs.ccmr_output(1).modify(|w| {
         w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
         w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
-    });
+    }); 
 
     tim3.start();
-
 
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
