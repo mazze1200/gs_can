@@ -135,11 +135,13 @@ async fn main(_spawner: Spawner) {
 
     let p = embassy_stm32::init(config);
 
+
+    // Config TIM3 as a time base for FDCAN timestamps
     let tim3 = p.TIM3;
     TIM3::enable_and_reset();
 
     let core_freq = TIM3::frequency().0;
-    info!("Timer core Freq: {}", core_freq);
+    debug!("Timer core Freq: {}", core_freq);
 
     let regs = <TIM3 as embassy_stm32::timer::low_level::GeneralPurpose16bitInstance>::regs_gp16();
 
