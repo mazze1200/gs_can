@@ -26,7 +26,6 @@ bind_interrupts!(struct Irqs {
     FDCAN3_IT1 => can::IT1InterruptHandler<FDCAN3>;
 });
 
-
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     info!("Hello CAN!");
@@ -65,7 +64,7 @@ async fn main(_spawner: Spawner) {
     let core_freq = embassy_stm32::peripherals::TIM3::frequency().0;
     info!("Timer core Freq: {}", core_freq);
 
-    let mut regs = TIM3::regs_core();
+    let regs = TIM3::regs_core();
 
     // The PSC is a devider for the timer core clock. The hardware automatically adds +1.
     regs.psc().modify(|r| r.set_psc(191));
@@ -74,36 +73,44 @@ async fn main(_spawner: Spawner) {
         .modify(|r| r.set_urs(embassy_stm32::pac::timer::vals::Urs::COUNTERONLY));
     regs.egr().write(|r| r.set_ug(true));
 
+    let r = <embassy_stm32::peripherals::TIM3 as embassy_stm32::timer::low_level::GeneralPurpose16bitInstance>::regs_gp16();
+    r.ccmr_output(0).modify(|w| {
+        w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+        w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+    });
+
+    r.ccmr_output(1).modify(|w| {
+        w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+        w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
+    });
+
     tim3.start();
 
-
-    // 250k bps
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(4_000_000, true);
     let can0 = can0.into_normal_mode();
-    let (mut can_tx_0, mut can_rx_0, can_tx_event_0, _can_cnt_0) = can0.split_with_control();
+    let (mut can_tx_0, mut can_rx_0, _can_tx_event_0, _can_cnt_0) = can0.split_with_control();
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB12, p.PB6, Irqs);
     can1.set_bitrate(500_000);
     can1.set_fd_data_bitrate(4_000_000, true);
     let can1 = can1.into_normal_mode();
-    let (mut can_tx_1,mut can_rx_1, can_tx_event_1, _can_cnt_1) = can1.split_with_control();
+    let (_can_tx_1, mut can_rx_1, _can_tx_event_1, _can_cnt_1) = can1.split_with_control();
 
     let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PF6, p.PF7, Irqs);
     can2.set_bitrate(500_000);
     can2.set_fd_data_bitrate(4_000_000, true);
     let can2 = can2.into_normal_mode();
-    let (mut can_tx_2, mut can_rx_2, can_tx_event_2, _can_cnt_2) = can2.split_with_control();
+    let (_can_tx_2, mut can_rx_2, _can_tx_event_2, _can_cnt_2) = can2.split_with_control();
 
     info!("CAN Configured");
 
-    let mut i = 0u8;
-    let mut last_read_ts = embassy_time::Instant::now();
-
-
     let tx_loop = async {
+        let mut i = 0u8;
+        // let mut last_read_ts = embassy_time::Instant::now();
+
         info!("Starting TX loop");
         loop {
             let frame = can::frame::FdFrame::new(
@@ -149,10 +156,7 @@ async fn main(_spawner: Spawner) {
         loop {
             match can_rx_1.read_fd().await {
                 Ok((rx_frame, ts)) => {
-                    info!(
-                        "CAN 1 Rx:{:x}",
-                        ts.as_micros() as f64 / 1_000_000.0,
-                    )
+                    info!("CAN 1 Rx:{:x}", ts.as_micros() as f64 / 1_000_000.0,)
                 }
                 Err(_err) => error!("Error in frame"),
             }
@@ -166,10 +170,7 @@ async fn main(_spawner: Spawner) {
         loop {
             match can_rx_2.read_fd().await {
                 Ok((rx_frame, ts)) => {
-                    info!(
-                        "CAN 2 Rx:{:x}",
-                        ts.as_micros() as f64 / 1_000_000.0,
-                    )
+                    info!("CAN 2 Rx:{:x}", ts.as_micros() as f64 / 1_000_000.0,)
                 }
                 Err(_err) => error!("Error in frame"),
             }
@@ -178,5 +179,5 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    let _ = join4(rx_loop0, rx_loop1 ,rx_loop2, tx_loop).await;
+    let _ = join4(rx_loop0, rx_loop1, rx_loop2, tx_loop).await;
 }
