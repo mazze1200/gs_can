@@ -38,7 +38,11 @@ async fn main(_spawner: Spawner) {
 
     info!("Hello World!");
 
-    let mut pwm = SimplePwm32::new(p.TIM3, p.PB0, khz(10));
+    let tim3 = p.TIM3;
+
+    // let mut pwm_2 = SimplePwm32::new(, p.PC8, khz(10));
+
+    let mut pwm = SimplePwm32::new(tim3.into_ref(), p.PB0, khz(10));
     let max = pwm.get_max_duty();
     pwm.enable(Channel::Ch3);
 
@@ -68,15 +72,13 @@ impl<'d, T: CaptureCompare16bitInstance> SimplePwm32<'d, T> {
         ch3: impl Peripheral<P = impl Channel3Pin<T>> + 'd,
         freq: Hertz,
     ) -> Self {
-        into_ref!(tim,  ch3);
+        into_ref!(tim, ch3);
 
         T::enable_and_reset();
-
 
         ch3.set_speed(Speed::VeryHigh);
         ch3.set_as_af(ch3.af_num(), AFType::OutputPushPull);
 
-        
         let this = Self { inner: tim };
 
         this.inner.set_frequency(freq);
@@ -100,11 +102,15 @@ impl<'d, T: CaptureCompare16bitInstance> SimplePwm32<'d, T> {
     }
 
     pub fn enable(&mut self, channel: Channel) {
-        T::regs_gp16().ccer().modify(|w| w.set_cce(channel.index(), true));
+        T::regs_gp16()
+            .ccer()
+            .modify(|w| w.set_cce(channel.index(), true));
     }
 
     pub fn disable(&mut self, channel: Channel) {
-        T::regs_gp16().ccer().modify(|w| w.set_cce(channel.index(), false));
+        T::regs_gp16()
+            .ccer()
+            .modify(|w| w.set_cce(channel.index(), false));
     }
 
     pub fn get_max_duty(&self) -> u16 {
@@ -113,6 +119,8 @@ impl<'d, T: CaptureCompare16bitInstance> SimplePwm32<'d, T> {
 
     pub fn set_duty(&mut self, channel: Channel, duty: u16) {
         defmt::assert!(duty < self.get_max_duty());
-        T::regs_gp16().ccr(channel.index()).write( |val| val.set_ccr(duty));
+        T::regs_gp16()
+            .ccr(channel.index())
+            .write(|val| val.set_ccr(duty));
     }
 }

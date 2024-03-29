@@ -12,8 +12,11 @@ use embassy_stm32::can::frame::FdFrame;
 use embassy_stm32::can::{FdCanConfiguration, FdcanRx, FdcanTxEvent, Instance};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
+use embassy_stm32::rcc::low_level::RccPeripheral;
+use embassy_stm32::time::{khz, mhz};
+use embassy_stm32::timer::low_level::CoreInstance;
 use embassy_stm32::usb_otg::Driver;
-use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
+use embassy_stm32::{bind_interrupts, peripherals, timer, usb_otg, Config};
 use embassy_time::{Instant, Timer};
 
 use embassy_stm32::can;
@@ -47,6 +50,7 @@ bind_interrupts!(struct Irqs {
     FDCAN2_IT1 => can::IT1InterruptHandler<FDCAN2>;
     FDCAN3_IT0 => can::IT0InterruptHandler<FDCAN3>;
     FDCAN3_IT1 => can::IT1InterruptHandler<FDCAN3>;
+    // TIM3 => timer::InterruptHandler;
 });
 
 pub enum Event {
@@ -130,6 +134,26 @@ async fn main(_spawner: Spawner) {
     }
 
     let p = embassy_stm32::init(config);
+
+    let tim3 = p.TIM3;
+    TIM3::enable_and_reset();
+
+    let core_freq = embassy_stm32::peripherals::TIM3::frequency().0;
+    info!("Timer core Freq: {}", core_freq);
+
+    let mut regs = TIM3::regs_core();
+
+    // The PSC is a devider for the timer core clock. The hardware automatically adds +1.
+    regs.psc().modify(|r| r.set_psc(191));
+    regs.arr().modify(|r| r.set_arr(0xffff));
+    regs.cr1()
+        .modify(|r| r.set_urs(embassy_stm32::pac::timer::vals::Urs::COUNTERONLY));
+    regs.egr().write(|r| r.set_ug(true));
+
+    tim3.start();
+
+
+
 
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
@@ -299,7 +323,7 @@ async fn main(_spawner: Spawner) {
                 Event::CanRx(frame, ts, channel) => {
                     debug!(
                         "CanRx | CAN Frame received. Channel: {}, Timestamp: {}",
-                        channel, ts
+                        channel, (ts.as_micros() as f64) / 1_000_000.0f64
                     );
 
                     let host_frame =
@@ -310,7 +334,7 @@ async fn main(_spawner: Spawner) {
                 Event::CanTx(echo_id, ts, channel) => {
                     debug!(
                         "CanTx | CAN Frame Transmitted. Channel: {}, Timestamp: {}, Echo ID {}",
-                        channel, ts, echo_id
+                        channel, (ts.as_micros() as f64) / 1_000_000.0f64, echo_id
                     );
 
                     if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
