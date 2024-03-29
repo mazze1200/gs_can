@@ -37,8 +37,8 @@ use crate::gs_can::{GsCanClass, State};
 
 use {defmt_rtt as _, panic_probe as _};
 
-mod gs_can;
 mod can_control_handler;
+mod gs_can;
 
 use can_control_handler::CanControlHandler;
 
@@ -150,7 +150,6 @@ async fn main(_spawner: Spawner) {
         .modify(|r| r.set_urs(embassy_stm32::pac::timer::vals::Urs::COUNTERONLY));
     regs.egr().write(|r| r.set_ug(true));
 
-    
     regs.ccmr_output(0).modify(|w| {
         w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
         w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
@@ -159,7 +158,7 @@ async fn main(_spawner: Spawner) {
     regs.ccmr_output(1).modify(|w| {
         w.set_ocm(0, embassy_stm32::timer::OutputCompareMode::Frozen.into());
         w.set_ocm(1, embassy_stm32::timer::OutputCompareMode::Frozen.into());
-    }); 
+    });
 
     tim3.start();
 
@@ -220,11 +219,7 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    let can_handler = CAN_HANDLER.init(CanControlHandler::new(
-        can_cnt_0,
-        can_cnt_1,
-        can_cnt_2,
-    ));
+    let can_handler = CAN_HANDLER.init(CanControlHandler::new(can_cnt_0, can_cnt_1, can_cnt_2));
 
     info!("CAN Configured");
 
@@ -331,7 +326,8 @@ async fn main(_spawner: Spawner) {
                 Event::CanRx(frame, ts, channel) => {
                     debug!(
                         "CanRx | CAN Frame received. Channel: {}, Timestamp: {}",
-                        channel, (ts.as_micros() as f64) / 1_000_000.0f64
+                        channel,
+                        (ts.as_micros() as f64) / 1_000_000.0f64
                     );
 
                     let host_frame =
@@ -342,7 +338,9 @@ async fn main(_spawner: Spawner) {
                 Event::CanTx(echo_id, ts, channel) => {
                     debug!(
                         "CanTx | CAN Frame Transmitted. Channel: {}, Timestamp: {}, Echo ID {}",
-                        channel, (ts.as_micros() as f64) / 1_000_000.0f64, echo_id
+                        channel,
+                        (ts.as_micros() as f64) / 1_000_000.0f64,
+                        echo_id
                     );
 
                     if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
@@ -393,11 +391,9 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    
     let mut led_green = Output::new(p.PB0, Level::High, Speed::Low);
     let mut led_yellow = Output::new(p.PE1, Level::High, Speed::Low);
     let mut led_red = Output::new(p.PB14, Level::High, Speed::Low);
-
 
     let led_fut = async {
         loop {
