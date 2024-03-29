@@ -109,27 +109,27 @@ async fn main(_spawner: Spawner) {
     let mut config = Config::default();
     {
         use embassy_stm32::rcc::*;
-        config.rcc.hsi = Some(HSIPrescaler::DIV1); // 64 Mhz
+        config.rcc.hsi = Some(HSIPrescaler::DIV1); // 64 MHz
         config.rcc.csi = true;
         config.rcc.hsi48 = Some(Hsi48Config {
             sync_from_usb: true,
         }); // needed for USB
         config.rcc.pll1 = Some(Pll {
-            source: PllSource::HSI,   // 64 Mhz
-            prediv: PllPreDiv::DIV4,  // 16 Mhz, this has to be between 2 Mhz and 16 Mhz
-            mul: PllMul::MUL48,       // 768 Mhz
-            divp: Some(PllDiv::DIV2), // 384 Mhz, these dividers have to be at least 2 to create a 50/50 duty cycle (the VCO does not guarantee that)
-            divq: Some(PllDiv::DIV8), // 96 Mhz
+            source: PllSource::HSI,   // 64 MHz
+            prediv: PllPreDiv::DIV4,  // 16 MHz, this has to be between 2 MHz and 16 MHz
+            mul: PllMul::MUL48,       // 768 MHz
+            divp: Some(PllDiv::DIV2), // 384 MHz, these dividers have to be at least 2 to create a 50/50 duty cycle (the VCO does not guarantee that)
+            divq: Some(PllDiv::DIV8), // 96 MHz
             divr: None,
         });
-        config.rcc.sys = Sysclk::PLL1_P; // 384 Mhz
-        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 192 Mhz, also the clock for timer 3 (TIM3)
-        config.rcc.apb1_pre = APBPrescaler::DIV2; // 96 Mhz
-        config.rcc.apb2_pre = APBPrescaler::DIV2; // 96 Mhz
-        config.rcc.apb3_pre = APBPrescaler::DIV2; // 96 Mhz
-        config.rcc.apb4_pre = APBPrescaler::DIV2; // 96 Mhz
+        config.rcc.sys = Sysclk::PLL1_P; // 384 MHz
+        config.rcc.ahb_pre = AHBPrescaler::DIV2; // 192 MHz, also the clock for timer 3 (TIM3)
+        config.rcc.apb1_pre = APBPrescaler::DIV2; // 96 MHz
+        config.rcc.apb2_pre = APBPrescaler::DIV2; // 96 MHz
+        config.rcc.apb3_pre = APBPrescaler::DIV2; // 96 MHz
+        config.rcc.apb4_pre = APBPrescaler::DIV2; // 96 MHz
         config.rcc.voltage_scale = VoltageScale::Scale1;
-        config.rcc.mux.fdcansel = mux::Fdcansel::PLL1_Q;
+        config.rcc.mux.fdcansel = mux::Fdcansel::PLL1_Q; // 96 MHz
         config.rcc.mux.usbsel = mux::Usbsel::HSI48;
     }
 
@@ -143,6 +143,7 @@ async fn main(_spawner: Spawner) {
 
     let regs = <TIM3 as embassy_stm32::timer::low_level::GeneralPurpose16bitInstance>::regs_gp16();
 
+    // Since the TIM3 core clock is equal to AHB clock (192 MHz) we want to devide the core clock by 192 to get a 1 MHz FDCAN timestamp clock base.
     // The PSC is a devider for the timer core clock. The hardware automatically adds +1.
     regs.psc().modify(|r| r.set_psc(191));
     regs.arr().modify(|r| r.set_arr(0xffff));
