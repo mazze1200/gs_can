@@ -35,13 +35,13 @@ async fn main(spawner: Spawner) -> ! {
         use embassy_stm32::rcc::*;
         config.rcc.hsi = Some(HSIPrescaler::DIV1);
         config.rcc.csi = true;
-        config.rcc.hsi48 = Some(Default::default()); // needed for RNG
+        config.rcc.hsi48 = Some(Default::default()); // needed for RNG <- should not be needed.
         config.rcc.pll1 = Some(Pll {
             source: PllSource::HSI,
             prediv: PllPreDiv::DIV4,
             mul: PllMul::MUL50,
             divp: Some(PllDiv::DIV2),
-            divq: None,
+            divq: Some(PllDiv::DIV8), // 100 MHz,
             divr: None,
         });
         config.rcc.sys = Sysclk::PLL1_P; // 400 Mhz
@@ -51,6 +51,7 @@ async fn main(spawner: Spawner) -> ! {
         config.rcc.apb3_pre = APBPrescaler::DIV2; // 100 Mhz
         config.rcc.apb4_pre = APBPrescaler::DIV2; // 100 Mhz
         config.rcc.voltage_scale = VoltageScale::Scale1;
+        config.rcc.mux.rngsel = mux::Rngsel::PLL1_Q;
     }
     let p = embassy_stm32::init(config);
     info!("Hello World!");
@@ -104,6 +105,12 @@ async fn main(spawner: Spawner) -> ! {
     // Ensure DHCP configuration is up before trying connect
     stack.wait_config_up().await;
 
+    if let Some(ip_v4) = stack.config_v4() {
+        info!("IP config: {:?}", ip_v4.address);
+    } else {
+        warn!("No IP v4 config");
+    }
+
     info!("Network task initialized");
 
     // Then we can use it!
@@ -116,7 +123,7 @@ async fn main(spawner: Spawner) -> ! {
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
         // You need to start a server on the host machine, for example: `nc -l 8000`
-        let remote_endpoint = (Ipv4Address::new(10, 42, 0, 1), 8000);
+        let remote_endpoint = (Ipv4Address::new(192, 168, 16, 32), 8000);
         info!("connecting...");
         let r = socket.connect(remote_endpoint).await;
         if let Err(e) = r {
