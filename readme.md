@@ -11,7 +11,8 @@ sudo ip link set can0 up type can fd on bitrate 500000 dbitrate 4000000 sample-p
 
 # Send frame
 ```code
-sudo cansend can0 0000A1B2##f1234567812345671121111
+sudo cansend can0 0000A1B2#deadbeef
+cansend can0 0000A222##1deadbeefffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 ```
 
 # Sniff

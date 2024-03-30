@@ -328,9 +328,10 @@ async fn main(_spawner: Spawner) {
             match event {
                 Event::CanRx(frame, ts, channel) => {
                     debug!(
-                        "CanRx | CAN Frame received. Channel: {}, Timestamp: {}",
+                        "CanRx | CAN Frame received. Channel: {}, Timestamp: {}, BRS: {}", 
                         channel,
-                        (ts.as_micros() as f64) / 1_000_000.0f64
+                        (ts.as_micros() as f64) / 1_000_000.0f64,
+                        frame.header().bit_rate_switching()
                     );
 
                     let host_frame =
