@@ -131,11 +131,11 @@ async fn main(_spawner: Spawner) {
         config.rcc.voltage_scale = VoltageScale::Scale1;
         config.rcc.mux.fdcansel = mux::Fdcansel::PLL1_Q; // 96 MHz
         config.rcc.mux.usbsel = mux::Usbsel::HSI48;
+        config.rcc.mux.rngsel = mux::Rngsel::PLL1_Q;
     }
 
     let p = embassy_stm32::init(config);
 
-    
     // Config TIM3 as a time base for FDCAN timestamps
     let tim3 = p.TIM3;
     TIM3::enable_and_reset();
