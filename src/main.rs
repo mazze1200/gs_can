@@ -516,28 +516,19 @@ async fn main(spawner: Spawner) {
         let mut last_time = embassy_time::Instant::now();
         loop {
             if green_led_channel.receive().now_or_never().is_some() {
-                if led_green.is_set_high() {
-                    led_green.set_low();
-                    Timer::after_millis(50).await;
+                if led_green.is_set_low() {
                     led_green.set_high();
                     Timer::after_millis(50).await;
-                    last_time = embassy_time::Instant::now();
-                } else {
-                    led_green.set_high();
-                    Timer::after_millis(50).await;
-                    led_green.set_low();
-                    Timer::after_millis(50).await;
-                    led_green.set_high();
-                    Timer::after_millis(50).await;
-                    last_time = embassy_time::Instant::now();
                 }
+
+                led_green.set_low();
+                Timer::after_millis(50).await;
+                led_green.set_high();
+                Timer::after_millis(50).await;
+                last_time = embassy_time::Instant::now();
             } else {
                 if (embassy_time::Instant::now() - last_time).as_millis() > 500 {
-                    if led_green.is_set_high() {
-                        led_green.set_low();
-                    } else {
-                        led_green.set_high();
-                    }
+                    led_green.toggle();
                     last_time = embassy_time::Instant::now();
                 } else {
                     Timer::after_millis(50).await;
