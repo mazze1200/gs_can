@@ -653,6 +653,15 @@ impl HostFrame {
     }
 }
 
+impl<'a> Into<&'a [u8]> for &'a HostFrame {
+    fn into(self) -> &'a [u8] {
+        match self {
+            HostFrame::ClassicTs(frame) => frame.as_bytes(),
+            HostFrame::FdTs(frame) => frame.as_bytes(),
+        }
+    }
+}
+
 impl Into<FdFrame> for &HostFrame {
     fn into(self) -> FdFrame {
         match self {
@@ -980,7 +989,7 @@ impl<'d> Handler for Control<'d> {
             Some(GsUsbRequestType::GsUsbBreqGetTermination) => {
                 let data: Option<(Ref<_, GsDeviceTerminationState>, _)> =
                     Ref::new_from_prefix(&mut *buf);
-                    debug!("GsUsbBreqGetTermination");
+                debug!("GsUsbBreqGetTermination");
 
                 match data {
                     Some((_terminaton_state, _)) => {
@@ -1119,10 +1128,7 @@ impl<'d, D: Driver<'d>> Sender<'d, D> {
 
         let max_package_size = self.write_ep.info().max_packet_size as usize;
 
-        let buf = match frame {
-            HostFrame::ClassicTs(frame) => frame.as_bytes(),
-            HostFrame::FdTs(frame) => frame.as_bytes(),
-        };
+        let buf: &[u8] = frame.into();
 
         let mut transmited = 0usize;
         let mut next_buffer_size = 0usize;
