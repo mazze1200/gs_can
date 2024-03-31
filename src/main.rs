@@ -26,7 +26,7 @@ use embassy_time::{Instant, Timer};
 use embassy_stm32::can;
 use embassy_stm32::peripherals::*;
 use embassy_usb::{Builder, UsbDevice};
-use futures::future::{join, join4};
+use futures::future::{join, join5};
 use futures::stream::{select, unfold};
 use futures::StreamExt;
 use gs_can::HostFrame;
@@ -429,6 +429,9 @@ async fn main(spawner: Spawner) {
     let host_frames =
         GS_HOST_FRAMES.init(array_init::array_init(|_| array_init::array_init(|_| None)));
 
+    let green_led_channel = Channel::<NoopRawMutex, (), 1>::new();
+    let yellow_led_channel = Channel::<NoopRawMutex, (), 1>::new();
+
     let main_handler = async {
         while let Some(event) = selectors.next().await {
             match event {
@@ -444,6 +447,8 @@ async fn main(spawner: Spawner) {
                         HostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
 
                     usb_eth_tx_channel.send(host_frame).await;
+
+                    let _ = green_led_channel.try_send(());
                 }
                 Event::CanTx(echo_id, ts, channel) => {
                     debug!(
@@ -452,6 +457,8 @@ async fn main(spawner: Spawner) {
                         (ts.as_micros() as f64) / 1_000_000.0f64,
                         echo_id
                     );
+
+                    let _ = yellow_led_channel.try_send(());
 
                     if let Some(channel_host_frames) = host_frames.get_mut(channel as usize) {
                         if let Some(host_frame) = channel_host_frames.get_mut((echo_id) as usize) {
@@ -502,25 +509,59 @@ async fn main(spawner: Spawner) {
     };
 
     let mut led_green = Output::new(p.PB0, Level::High, Speed::Low);
-    let mut led_yellow = Output::new(p.PE1, Level::High, Speed::Low);
-    let mut led_red = Output::new(p.PB14, Level::High, Speed::Low);
+    let mut led_yellow = Output::new(p.PE1, Level::Low, Speed::Low);
+    let mut led_red = Output::new(p.PB14, Level::Low, Speed::Low);
 
-    let led_fut = async {
+    let green_led_fut = async {
+        let mut last_time = embassy_time::Instant::now();
         loop {
-            // info!("LED high");
-            led_green.set_high();
-            led_yellow.set_high();
-            led_red.set_high();
-            Timer::after_millis(500).await;
+            if green_led_channel.receive().now_or_never().is_some() {
+                if led_green.is_set_high() {
+                    led_green.set_low();
+                    Timer::after_millis(50).await;
+                    led_green.set_high();
+                    Timer::after_millis(50).await;
+                    last_time = embassy_time::Instant::now();
+                } else {
+                    led_green.set_high();
+                    Timer::after_millis(50).await;
+                    led_green.set_low();
+                    Timer::after_millis(50).await;
+                    led_green.set_high();
+                    Timer::after_millis(50).await;
+                    last_time = embassy_time::Instant::now();
+                }
+            } else {
+                if (embassy_time::Instant::now() - last_time).as_millis() > 500 {
+                    if led_green.is_set_high() {
+                        led_green.set_low();
+                    } else {
+                        led_green.set_high();
+                    }
+                    last_time = embassy_time::Instant::now();
+                } else {
+                    Timer::after_millis(50).await;
+                }
+            }
+        }
+    };
 
-            // info!("LED low");
-            led_green.set_low();
+    let yellow_led_fut = async {
+        loop {
+            let _ = yellow_led_channel.receive().await;
+            led_yellow.set_high();
+            Timer::after_millis(50).await;
             led_yellow.set_low();
-            led_red.set_low();
-            Timer::after_millis(500).await;
         }
     };
 
     info!("Start handlers");
-    join4(led_fut, main_handler, can_tx_fut, usb_eth_tx_fut).await;
+    join5(
+        green_led_fut,
+        yellow_led_fut,
+        main_handler,
+        can_tx_fut,
+        usb_eth_tx_fut,
+    )
+    .await;
 }
