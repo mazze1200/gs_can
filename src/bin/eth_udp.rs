@@ -5,7 +5,7 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_net::{Ipv4Address, Stack, StackResources};
+use embassy_net::{Ipv4Address, Ipv4Cidr, Stack, StackResources};
 use embassy_stm32::eth::generic_smi::GenericSMI;
 use embassy_stm32::eth::{Ethernet, PacketQueue};
 use embassy_stm32::peripherals::ETH;
@@ -87,12 +87,14 @@ async fn main(spawner: Spawner) -> ! {
         mac_addr,
     );
 
-    let config = embassy_net::Config::dhcpv4(Default::default());
-    //let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-    //    address: Ipv4Cidr::new(Ipv4Address::new(10, 42, 0, 61), 24),
-    //    dns_servers: Vec::new(),
-    //    gateway: Some(Ipv4Address::new(10, 42, 0, 1)),
-    //});
+    // let config = embassy_net::Config::dhcpv4(Default::default());
+
+    let ip_address = Ipv4Address::new(192, 168, 250, 61);
+    let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+        address: Ipv4Cidr::new(ip_address, 24),
+        dns_servers: heapless::Vec::new(),
+        gateway: Some(ip_address),
+    });
 
     // Init network stack
     static STACK: StaticCell<Stack<Device>> = StaticCell::new();
@@ -125,13 +127,15 @@ async fn main(spawner: Spawner) -> ! {
     let mut tx_buffer = [0; 4096];
 
     loop {
-        let socket = UdpSocket::new(
+        let mut socket = UdpSocket::new(
             stack,
             &mut rx_meta,
             &mut rx_buffer,
             &mut tx_meta,
             &mut tx_buffer,
         );
+
+        socket.bind(0).unwrap();
 
         let remote_endpoint = (Ipv4Address::new(224, 4, 4, 4), 4444);
 
@@ -140,7 +144,7 @@ async fn main(spawner: Spawner) -> ! {
             let r = socket.send_to(b"Hello\n", remote_endpoint).await;
             if let Err(e) = r {
                 info!("write error: {:?}", e);
-                break;
+                // break;
             }
             Timer::after_secs(1).await;
         }
