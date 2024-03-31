@@ -26,7 +26,7 @@ use embassy_time::{Instant, Timer};
 use embassy_stm32::can;
 use embassy_stm32::peripherals::*;
 use embassy_usb::{Builder, UsbDevice};
-use futures::future::{join, join5};
+use futures::future::{join, join3, join4};
 use futures::stream::{select, unfold};
 use futures::StreamExt;
 use gs_can::HostFrame;
@@ -81,6 +81,8 @@ pub enum Event {
     CanTx(u8, Instant, u8),
     /// Frame
     UsbRx(HostFrame),
+    /// CAN bus error
+    CanErr,
 }
 
 fn create_can_rx_stream<'d, I: Instance>(
@@ -431,6 +433,7 @@ async fn main(spawner: Spawner) {
 
     let green_led_channel = Channel::<NoopRawMutex, (), 1>::new();
     let yellow_led_channel = Channel::<NoopRawMutex, (), 1>::new();
+    let red_led_channel = Channel::<NoopRawMutex, (), 1>::new();
 
     let main_handler = async {
         while let Some(event) = selectors.next().await {
@@ -504,6 +507,9 @@ async fn main(spawner: Spawner) {
                         .send((can_frame, channel as u8, Some(echo_id as u8)))
                         .await;
                 }
+                Event::CanErr => {
+                    let _ = red_led_channel.try_send(());
+                }
             }
         }
     };
@@ -546,10 +552,18 @@ async fn main(spawner: Spawner) {
         }
     };
 
+    let red_led_fut = async {
+        loop {
+            let _ = red_led_channel.receive().await;
+            led_red.set_high();
+            Timer::after_millis(50).await;
+            led_red.set_low();
+        }
+    };
+
     info!("Start handlers");
-    join5(
-        green_led_fut,
-        yellow_led_fut,
+    join4(
+        join3(green_led_fut, yellow_led_fut, red_led_fut),
         main_handler,
         can_tx_fut,
         usb_eth_tx_fut,
