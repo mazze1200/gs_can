@@ -4,6 +4,11 @@ http://www.bittiming.can-wiki.info/
 https://stackoverflow.com/questions/59802073/how-to-set-can-baud-rate-to-500k-for-stm32-controller
 
 
+# build release
+```code
+DEFMT_LOG=info cargo run  --release --bin gs_can
+```
+
 # Set bitrate abd bring device up
 ```code
 sudo ip link set can0 up type can fd on bitrate 500000 dbitrate 4000000 sample-point 0.875
