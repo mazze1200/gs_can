@@ -207,7 +207,7 @@ async fn main(spawner: Spawner) {
     // create can
     let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
     can0.set_bitrate(500_000);
-    can0.set_fd_data_bitrate(4_000_000, true);
+    can0.set_fd_data_bitrate(1_000_000, true);
     can0.set_tx_mode(can::config::TxBufferMode::Fifo);
     let can0 = can0.into_normal_mode();
     let (mut can_tx_0, can_rx_0, can_tx_event_0, can_cnt_0) = can0.split_with_control();
@@ -223,14 +223,14 @@ async fn main(spawner: Spawner) {
 
     let mut can1 = can::FdcanConfigurator::new(p.FDCAN2, p.PB12, p.PB6, Irqs);
     can1.set_bitrate(500_000);
-    can1.set_fd_data_bitrate(4_000_000, true);
+    can1.set_fd_data_bitrate(1_000_000, true);
     can1.set_tx_mode(can::config::TxBufferMode::Fifo);
     let can1 = can1.into_normal_mode();
     let (mut can_tx_1, can_rx_1, can_tx_event_1, can_cnt_1) = can1.split_with_control();
 
     let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PF6, p.PF7, Irqs);
     can2.set_bitrate(500_000);
-    can2.set_fd_data_bitrate(4_000_000, true);
+    can2.set_fd_data_bitrate(1_000_000, true);
     can2.set_tx_mode(can::config::TxBufferMode::Fifo);
     let can2 = can2.into_normal_mode();
     let (mut can_tx_2, can_rx_2, can_tx_event_2, can_cnt_2) = can2.split_with_control();
