@@ -25,6 +25,12 @@ sudo cansniffer -c -f 1 can0
 sudo tcpdump -i lan host 224.4.4.4 and port 4444
 ```
 
+# Reset the chip
+```code
+probe-rs reset --chip STM32H723ZGTx
+```
+
+
 # PinMux
 | Function |    Pin     |   Header  |
 | -------- | ---------- | --------- |
