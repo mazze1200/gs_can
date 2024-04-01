@@ -82,7 +82,8 @@ pub enum Event {
     /// Frame
     UsbRx(HostFrame),
     /// CAN bus error
-    CanErr,
+    /// Channel index
+    CanErr(u8),
 }
 
 fn create_can_rx_stream<'d, I: Instance>(
@@ -90,19 +91,37 @@ fn create_can_rx_stream<'d, I: Instance>(
     can_channel: u8,
 ) -> impl futures::Stream<Item = Event> + 'd {
     unfold((can, can_channel), |(mut rx, can_channel)| async move {
-        loop {
-            let res = rx.read_fd().await;
-            match res {
+        // loop
+        {
+            match rx.read_fd().await {
                 Ok((frame, ts)) => {
-                    debug!(
+                    trace!(
                         "Received CAN Frame |  Channel: {}, Header: {}",
                         can_channel,
                         frame.header()
                     );
                     return Some((Event::CanRx(frame, ts, can_channel), (rx, can_channel)));
                 }
-                Err(_) => {
-                    info!("handle CAN Bus errors");
+                Err(bus_error) => {
+                    trace!("handle CAN Bus errors: {}", bus_error);
+                    match bus_error {
+                        can::enums::BusError::BusOff => {
+                            I::registers().regs.cccr().modify(|r| r.set_init(false));
+                            Timer::after_millis(10).await;
+                            return Some((Event::CanErr(can_channel), (rx, can_channel)));
+                        }
+                        can::enums::BusError::BusPassive => {
+                            Timer::after_millis(1).await;
+                            return Some((Event::CanErr(can_channel), (rx, can_channel)));
+                        }
+                        can::enums::BusError::BusWarning => {
+                            Timer::after_millis(1).await;
+                            return Some((Event::CanErr(can_channel), (rx, can_channel)));
+                        }
+                        _ => {
+                            return Some((Event::CanErr(can_channel), (rx, can_channel)));
+                        }
+                    }
                 }
             }
         }
@@ -447,7 +466,7 @@ async fn main(spawner: Spawner) {
                     );
 
                     let host_frame =
-                        HostFrame::new_from(&frame, channel, -1i32 as u32, ts.as_micros() as u32);
+                        HostFrame::new_from(&frame, channel, u32::MAX, ts.as_micros() as u32);
 
                     usb_eth_tx_channel.send(host_frame).await;
 
@@ -507,7 +526,7 @@ async fn main(spawner: Spawner) {
                         .send((can_frame, channel as u8, Some(echo_id as u8)))
                         .await;
                 }
-                Event::CanErr => {
+                Event::CanErr(_channel) => {
                     let _ = red_led_channel.try_send(());
                 }
             }
