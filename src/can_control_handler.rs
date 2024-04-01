@@ -89,10 +89,12 @@ impl GsCanHandlers for CanControlHandler {
                     GS_CAN_FEATURE_IDENTIFY |
                     GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE
             */
+
+            // | GsDeviceBtConstFeature::GsCanFeatureListenOnly
+
             timing.set_features(
                 GsDeviceBtConstFeature::GsCanFeatureFd
                     | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly
                     | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
                     | GsDeviceBtConstFeature::GsCanFeatureLoopBack
                     | GsDeviceBtConstFeature::GsCanFeatureIdentify,
@@ -117,10 +119,12 @@ impl GsCanHandlers for CanControlHandler {
             2 => Some(self.can_cnt_2.get_frequency()),
             _ => None,
         } {
+
+            // | GsDeviceBtConstFeature::GsCanFeatureListenOnly
+
             timing.set_features(
                 GsDeviceBtConstFeature::GsCanFeatureFd
                     | GsDeviceBtConstFeature::GsCanFeatureBtConstExt
-                    | GsDeviceBtConstFeature::GsCanFeatureListenOnly
                     | GsDeviceBtConstFeature::GsCanFeatureHwTimestamp
                     | GsDeviceBtConstFeature::GsCanFeatureLoopBack
                     | GsDeviceBtConstFeature::GsCanFeatureIdentify,
