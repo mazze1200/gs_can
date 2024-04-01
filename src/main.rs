@@ -8,29 +8,23 @@ use defmt::{panic, *};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 
-use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_net::{Ipv4Address, Ipv4Cidr, Stack, StackResources};
 use embassy_stm32::can::frame::FdFrame;
 use embassy_stm32::can::{FdCanConfiguration, FdcanRx, FdcanTxEvent, Instance};
-use embassy_stm32::eth::generic_smi::GenericSMI;
-use embassy_stm32::eth::{Ethernet, PacketQueue};
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::rcc::low_level::RccPeripheral;
-use embassy_stm32::rng::{self, Rng};
 use embassy_stm32::timer::low_level::CoreInstance;
 use embassy_stm32::usb_otg::Driver;
-use embassy_stm32::{bind_interrupts, eth, peripherals, usb_otg, Config};
+use embassy_stm32::{bind_interrupts, peripherals, usb_otg, Config};
 use embassy_time::{Instant, Timer};
 
 use embassy_stm32::can;
 use embassy_stm32::peripherals::*;
 use embassy_usb::{Builder, UsbDevice};
-use futures::future::{join, join3, join4};
+use futures::future::{join3, join4};
 use futures::stream::{select, unfold};
 use futures::StreamExt;
 use gs_can::HostFrame;
-use rand_core::RngCore;
 use static_cell::StaticCell;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -55,19 +49,10 @@ bind_interrupts!(struct Irqs {
     FDCAN2_IT1 => can::IT1InterruptHandler<FDCAN2>;
     FDCAN3_IT0 => can::IT0InterruptHandler<FDCAN3>;
     FDCAN3_IT1 => can::IT1InterruptHandler<FDCAN3>;
-    ETH => eth::InterruptHandler;
-    RNG => rng::InterruptHandler<peripherals::RNG>;
     // TIM3 => timer::InterruptHandler;
 });
 
-type EthernetDevice = Ethernet<'static, ETH, GenericSMI>;
-
 type UsbDriver = Driver<'static, embassy_stm32::peripherals::USB_OTG_HS>;
-
-#[embassy_executor::task]
-async fn net_task(stack: &'static Stack<EthernetDevice>) -> ! {
-    stack.run().await
-}
 
 #[embassy_executor::task]
 async fn usb_task(mut device: UsbDevice<'static, UsbDriver>) -> ! {
@@ -170,7 +155,6 @@ async fn main(spawner: Spawner) {
         config.rcc.voltage_scale = VoltageScale::Scale1;
         config.rcc.mux.fdcansel = mux::Fdcansel::PLL1_Q; // 96 MHz
         config.rcc.mux.usbsel = mux::Usbsel::HSI48;
-        config.rcc.mux.rngsel = mux::Rngsel::PLL1_Q;
     }
 
     let p = embassy_stm32::init(config);
@@ -269,73 +253,6 @@ async fn main(spawner: Spawner) {
 
     info!("CAN Configured");
 
-    // Generate random seed.
-    let mut rng = Rng::new(p.RNG, Irqs);
-    let mut seed = [0; 8];
-    rng.fill_bytes(&mut seed);
-    let seed = u64::from_le_bytes(seed);
-
-    let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
-
-    static PACKETS: StaticCell<PacketQueue<4, 4>> = StaticCell::new();
-    let device = Ethernet::new(
-        PACKETS.init(PacketQueue::<4, 4>::new()),
-        p.ETH,
-        Irqs,
-        p.PA1,
-        p.PA2,
-        p.PC1,
-        p.PA7,
-        p.PC4,
-        p.PC5,
-        p.PG13,
-        p.PB13,
-        p.PG11,
-        GenericSMI::new(0),
-        mac_addr,
-    );
-
-    // let config = embassy_net::Config::dhcpv4(Default::default());
-
-    let ip_address = Ipv4Address::new(192, 168, 250, 61);
-    let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: Ipv4Cidr::new(ip_address, 24),
-        dns_servers: heapless::Vec::new(),
-        gateway: Some(ip_address),
-    });
-
-    // Init network stack
-    static STACK: StaticCell<Stack<EthernetDevice>> = StaticCell::new();
-    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
-    let stack = &*STACK.init(Stack::new(
-        device,
-        config,
-        RESOURCES.init(StackResources::<3>::new()),
-        seed,
-    ));
-
-    // Launch network task
-    unwrap!(spawner.spawn(net_task(&stack)));
-
-    // Then we can use it!
-    let mut rx_meta = [PacketMetadata::EMPTY; 16];
-    let mut rx_buffer = [0; 4096];
-    let mut tx_meta = [PacketMetadata::EMPTY; 16];
-    let mut tx_buffer = [0; 4096];
-
-    let mut udp_socket = UdpSocket::new(
-        stack,
-        &mut rx_meta,
-        &mut rx_buffer,
-        &mut tx_meta,
-        &mut tx_buffer,
-    );
-
-    udp_socket.bind(0).unwrap();
-    let remote_udp_address = (Ipv4Address::new(224, 4, 4, 4), 4444);
-
-    info!("Ethernet configured");
-
     // Create the driver, from the HAL.
     static EP_OUT_BUFFER: StaticCell<[u8; 256]> = StaticCell::new();
 
@@ -406,33 +323,20 @@ async fn main(spawner: Spawner) {
         None
     }));
 
-    let usb_eth_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
-    let usb_eth_tx_fut = async {
+    let usb_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
+    let usb_tx_fut = async {
         loop {
-            let frame = usb_eth_tx_channel.receive().await;
-            let frame_ref = (&frame).into();
+            let frame = usb_tx_channel.receive().await;
 
             if let Some(_) = usb_tx.wait_connection().now_or_never() {
                 debug!("USB TX connected");
 
-                let (usb_tx_res, eth_tx_res) = join(
-                    usb_tx.write_frame(&frame),
-                    udp_socket.send_to(frame_ref, remote_udp_address),
-                )
-                .await;
+                let usb_tx_res = usb_tx.write_frame(&frame).await;
 
                 if usb_tx_res.is_err() {
                     warn!("Add USB error handling!");
                 }
-
-                if eth_tx_res.is_err() {
-                    warn!("Add ETH error handling!");
-                }
-            } else {
-                if let Err(_) = udp_socket.send_to(frame_ref, remote_udp_address).await {
-                    warn!("Add ETH error handling!");
-                }
-            }
+            } 
         }
     };
 
@@ -468,7 +372,7 @@ async fn main(spawner: Spawner) {
                     let host_frame =
                         HostFrame::new_from(&frame, channel, u32::MAX, ts.as_micros() as u32);
 
-                    usb_eth_tx_channel.send(host_frame).await;
+                    usb_tx_channel.send(host_frame).await;
 
                     let _ = green_led_channel.try_send(());
                 }
@@ -488,7 +392,7 @@ async fn main(spawner: Spawner) {
                             if let Some(mut frame) = frame {
                                 frame.set_timestamp(ts.as_micros() as u32);
 
-                                usb_eth_tx_channel.send(frame).await;
+                                usb_tx_channel.send(frame).await;
                             } else {
                                 warn!("CanTx | Here should be a frame but isn't!");
                             }
@@ -585,7 +489,7 @@ async fn main(spawner: Spawner) {
         join3(green_led_fut, yellow_led_fut, red_led_fut),
         main_handler,
         can_tx_fut,
-        usb_eth_tx_fut,
+        usb_tx_fut,
     )
     .await;
 }
