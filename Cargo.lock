@@ -700,6 +700,7 @@ dependencies = [
  "num-traits",
  "panic-probe",
  "rand_core",
+ "rmp",
  "static_cell",
  "stm32-fmc",
  "zerocopy",
@@ -802,6 +803,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de3145af08024dea9fa9914f381a17b8fc6034dfb00f3a84013f7ff43f29ed4c"
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -866,6 +873,15 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+
+[[package]]
+name = "rmp"
+version = "0.8.12"
+dependencies = [
+ "byteorder",
+ "num-traits",
+ "paste",
+]
 
 [[package]]
 name = "rustc_version"

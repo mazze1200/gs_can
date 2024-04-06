@@ -19,6 +19,7 @@ use flagset::{flags, FlagSet, InvalidBits};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 
+use rmp::encode::{RmpWriteErr, ValueWriteError};
 use zerocopy_derive::{AsBytes, FromBytes};
 
 use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
@@ -31,9 +32,12 @@ use embassy_usb::{Builder, Handler};
 use zerocopy::{AsBytes, FromZeroes, Ref};
 use zerocopy_derive::FromZeroes;
 
+use rmp::encode::RmpWrite;
 use zerocopy::byteorder::little_endian::U32;
 
 use futures::prelude::*;
+
+// extern crate rmp;
 
 /// This should be used as `device_class` when building the `UsbDevice`.
 const USB_CLASS_GS_CAN: u8 = 0xff; // vendor specific
@@ -649,6 +653,170 @@ impl HostFrame {
         match self {
             HostFrame::ClassicTs(frame) => frame.timestamp.set(timestamp),
             HostFrame::FdTs(frame) => frame.timestamp.set(timestamp),
+        }
+    }
+
+    pub fn into_msgpack<W>(&self, mut buffer: &mut [u8]) -> Result<usize, rmp::encode::Error>
+    where
+        W: RmpWriteErr,
+    {
+        /*
+                "timestamp": message.timestamp,
+                "arbitration_id": message.arbitration_id,
+                "is_extended_id": message.is_extended_id,
+                "is_remote_frame": message.is_remote_frame,
+                "is_error_frame": message.is_error_frame,
+                "channel": message.channel,
+                "dlc": message.dlc,
+                "data": message.data,
+                "is_fd": message.is_fd,
+                "bitrate_switch": message.bitrate_switch,
+                "error_state_indicator": message.error_state_indicator,
+
+
+        timestamp: float = 0.0,
+        arbitration_id: int = 0,
+        is_extended_id: bool = True,
+        is_remote_frame: bool = False,
+        is_error_frame: bool = False,
+        channel: Optional[typechecking.Channel] = None,
+        dlc: Optional[int] = None,
+        data: Optional[typechecking.CanData] = None,
+        is_fd: bool = False,
+        bitrate_switch: bool = False,
+        error_state_indicator: bool = False,
+        */
+
+        let buffer_len = buffer.len();
+
+        match self {
+            HostFrame::ClassicTs(frame) => {
+                let mut buf = &mut buffer[..];
+
+                let timestamp = frame.timestamp.get() as f32 / 1_000_000f32;
+                rmp::encode::write_f32(&mut buf, timestamp)?;
+                let mut buf = &mut buf[5..];
+
+                let arbitration_id = frame.can_id.0.get() as i64;
+                let marker = rmp::encode::write_sint(&mut buf, arbitration_id)?;
+                let mut buf = &mut buf[marker.len()..];
+
+                let is_extended_id = frame.can_id.extended();
+                rmp::encode::write_bool(&mut buf, is_extended_id)?;
+                let mut buf = &mut buf[1..];
+
+                let is_remote_frame = frame.can_id.rtr();
+                rmp::encode::write_bool(&mut buf, is_remote_frame)?;
+                let mut buf = &mut buf[1..];
+
+                let is_error_frame = frame.can_id.err();
+                rmp::encode::write_bool(&mut buf, is_error_frame)?;
+                let mut buf = &mut buf[1..];
+
+                let channel = frame.channel as i32;
+                rmp::encode::write_i32(&mut buf, channel)?;
+                let mut buf = &mut buf[5..];
+
+                let dlc = frame.can_dlc as i32;
+                rmp::encode::write_i32(&mut buf, dlc)?;
+                let mut buf = &mut buf[5..];
+
+                let data_marker = rmp::encode::write_array_len(&mut buf, dlc as u32)?;
+                let mut buf = &mut buf[data_marker.len()..];
+
+                rmp::encode::write_bin(&mut buf, &frame.data[..dlc as usize])?;
+                let mut buf = &mut buf[dlc as usize..];
+
+                let is_fd = frame
+                    .get_flags()
+                    .unwrap()
+                    .0
+                    .contains(GsHostFrameFlag::GsCanFlagFd);
+                rmp::encode::write_bool(&mut buf, is_fd)?;
+                let mut buf = &mut buf[1..];
+
+                let bitrate_switch = frame
+                    .get_flags()
+                    .unwrap()
+                    .0
+                    .contains(GsHostFrameFlag::GsCanFlagBrs);
+                rmp::encode::write_bool(&mut buf, bitrate_switch)?;
+                let mut buf = &mut buf[1..];
+
+                let error_state_indicator = frame
+                    .get_flags()
+                    .unwrap()
+                    .0
+                    .contains(GsHostFrameFlag::GsCanFlagEsi);
+                rmp::encode::write_bool(&mut buf, error_state_indicator)?;
+                let buf = &mut buf[1..];
+
+                return Ok(buffer_len - buf.len());
+            }
+            HostFrame::FdTs(frame) => {
+                let mut buf = &mut buffer[..];
+
+                let timestamp = frame.timestamp.get() as f32 / 1_000_000f32;
+                rmp::encode::write_f32(&mut buf, timestamp)?;
+                let mut buf = &mut buf[5..];
+
+                let arbitration_id = frame.can_id.0.get() as i64;
+                let marker = rmp::encode::write_sint(&mut buf, arbitration_id)?;
+                let mut buf = &mut buf[marker.len()..];
+
+                let is_extended_id = frame.can_id.extended();
+                rmp::encode::write_bool(&mut buf, is_extended_id)?;
+                let mut buf = &mut buf[1..];
+
+                let is_remote_frame = frame.can_id.rtr();
+                rmp::encode::write_bool(&mut buf, is_remote_frame)?;
+                let mut buf = &mut buf[1..];
+
+                let is_error_frame = frame.can_id.err();
+                rmp::encode::write_bool(&mut buf, is_error_frame)?;
+                let mut buf = &mut buf[1..];
+
+                let channel = frame.channel as i32;
+                rmp::encode::write_i32(&mut buf, channel)?;
+                let mut buf = &mut buf[5..];
+
+                let dlc = frame.can_dlc;
+                rmp::encode::write_i32(&mut buf, dlc as i32)?;
+                let mut buf = &mut buf[5..];
+
+                let len = dlc_to_len(dlc);
+                let data_marker = rmp::encode::write_array_len(&mut buf, len as u32)?;
+                let mut buf = &mut buf[data_marker.len()..];
+
+                rmp::encode::write_bin(&mut buf, &frame.data[..len as usize])?;
+                let mut buf = &mut buf[len as usize..];
+
+                let is_fd = frame
+                    .get_flags()
+                    .unwrap()
+                    .0
+                    .contains(GsHostFrameFlag::GsCanFlagFd);
+                rmp::encode::write_bool(&mut buf, is_fd)?;
+                let mut buf = &mut buf[1..];
+
+                let bitrate_switch = frame
+                    .get_flags()
+                    .unwrap()
+                    .0
+                    .contains(GsHostFrameFlag::GsCanFlagBrs);
+                rmp::encode::write_bool(&mut buf, bitrate_switch)?;
+                let mut buf = &mut buf[1..];
+
+                let error_state_indicator = frame
+                    .get_flags()
+                    .unwrap()
+                    .0
+                    .contains(GsHostFrameFlag::GsCanFlagEsi);
+                rmp::encode::write_bool(&mut buf, error_state_indicator)?;
+                let buf = &mut buf[1..];
+
+                return Ok(buffer_len - buf.len());
+            }
         }
     }
 }
