@@ -332,7 +332,7 @@ async fn main(spawner: Spawner) {
     );
 
     udp_socket.bind(0).unwrap();
-    let remote_udp_address = (Ipv4Address::new(224, 4, 4, 4), 4444);
+    let remote_udp_address = (Ipv4Address::new(239, 74, 163, 2), 43113);
 
     info!("Ethernet configured");
 
@@ -408,16 +408,19 @@ async fn main(spawner: Spawner) {
 
     let usb_eth_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
     let usb_eth_tx_fut = async {
+        let mut udp_buffer = [0u8;256];
         loop {
             let frame = usb_eth_tx_channel.receive().await;
-            let frame_ref = (&frame).into();
+            // let frame_ref = (&frame).into();
+
+            let udp_frame_size = frame.into_msgpack(&mut udp_buffer[..]).unwrap();
 
             if let Some(_) = usb_tx.wait_connection().now_or_never() {
                 debug!("USB TX connected");
 
                 let (usb_tx_res, eth_tx_res) = join(
                     usb_tx.write_frame(&frame),
-                    udp_socket.send_to(frame_ref, remote_udp_address),
+                    udp_socket.send_to(&udp_buffer[..udp_frame_size], remote_udp_address),
                 )
                 .await;
 
@@ -429,7 +432,7 @@ async fn main(spawner: Spawner) {
                     warn!("Add ETH error handling!");
                 }
             } else {
-                if let Err(_) = udp_socket.send_to(frame_ref, remote_udp_address).await {
+                if let Err(_) = udp_socket.send_to(&udp_buffer[..udp_frame_size], remote_udp_address).await {
                     warn!("Add ETH error handling!");
                 }
             }
