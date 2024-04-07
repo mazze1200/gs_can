@@ -19,7 +19,7 @@ use flagset::{flags, FlagSet, InvalidBits};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 
-use rmp::encode::{RmpWriteErr, ValueWriteError};
+use rmp::encode::{self, RmpWriteErr, ValueWriteError};
 use zerocopy_derive::{AsBytes, FromBytes};
 
 use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
@@ -656,9 +656,8 @@ impl HostFrame {
         }
     }
 
-    pub fn into_msgpack<W>(&self, mut buffer: &mut [u8]) -> Result<usize, rmp::encode::Error>
-    where
-        W: RmpWriteErr,
+    pub fn into_msgpack(&self, mut buffer: &mut [u8]) -> Result<usize, rmp::errors::Error>
+
     {
         /*
                 "timestamp": message.timestamp,
@@ -687,135 +686,112 @@ impl HostFrame {
         error_state_indicator: bool = False,
         */
 
-        let buffer_len = buffer.len();
+        let mut writer = encode::buffer::ByteBuf::new(&mut buffer);
+        let wr = &mut writer;
 
         match self {
             HostFrame::ClassicTs(frame) => {
-                let mut buf = &mut buffer[..];
-
-                let timestamp = frame.timestamp.get() as f32 / 1_000_000f32;
-                rmp::encode::write_f32(&mut buf, timestamp)?;
-                let mut buf = &mut buf[5..];
-
-                let arbitration_id = frame.can_id.0.get() as i64;
-                let marker = rmp::encode::write_sint(&mut buf, arbitration_id)?;
-                let mut buf = &mut buf[marker.len()..];
-
-                let is_extended_id = frame.can_id.extended();
-                rmp::encode::write_bool(&mut buf, is_extended_id)?;
-                let mut buf = &mut buf[1..];
-
-                let is_remote_frame = frame.can_id.rtr();
-                rmp::encode::write_bool(&mut buf, is_remote_frame)?;
-                let mut buf = &mut buf[1..];
-
-                let is_error_frame = frame.can_id.err();
-                rmp::encode::write_bool(&mut buf, is_error_frame)?;
-                let mut buf = &mut buf[1..];
-
-                let channel = frame.channel as i32;
-                rmp::encode::write_i32(&mut buf, channel)?;
-                let mut buf = &mut buf[5..];
-
-                let dlc = frame.can_dlc as i32;
-                rmp::encode::write_i32(&mut buf, dlc)?;
-                let mut buf = &mut buf[5..];
-
-                let data_marker = rmp::encode::write_array_len(&mut buf, dlc as u32)?;
-                let mut buf = &mut buf[data_marker.len()..];
-
-                rmp::encode::write_bin(&mut buf, &frame.data[..dlc as usize])?;
-                let mut buf = &mut buf[dlc as usize..];
-
-                let is_fd = frame
+                 encode::write_map_len(wr, 11)?;
+             
+                 encode::write_str(wr, "timestamp")?;
+                 encode::write_f64(wr, frame.timestamp.get() as f64 / 1_000_000f64)?;
+                 
+                 encode::write_str(wr, "arbitration_id")?;
+                 encode::write_uint(wr, frame.can_id.0.get() as u64)?;
+             
+                 encode::write_str(wr, "is_extended_id")?;
+                 encode::write_bool(wr, frame.can_id.extended())?;
+             
+                 encode::write_str(wr, "is_remote_frame")?;
+                 encode::write_bool(wr, frame.can_id.rtr())?;
+             
+                 encode::write_str(wr, "is_error_frame")?;
+                 encode::write_bool(wr, frame.can_id.err())?;
+             
+                 encode::write_str(wr, "channel")?;
+                 encode::write_uint(wr, frame.channel as u64)?;
+             
+                 encode::write_str(wr, "dlc")?;
+                 encode::write_uint(wr,  frame.can_dlc as u64)?;
+             
+                 encode::write_str(wr, "data")?;
+                 let data = &frame.data[..dlc_to_len(frame.can_dlc) as usize];
+                 encode::write_bin(wr, &data[..] )?;
+             
+                 encode::write_str(wr, "is_fd")?;
+                 encode::write_bool(wr, frame
                     .get_flags()
                     .unwrap()
                     .0
-                    .contains(GsHostFrameFlag::GsCanFlagFd);
-                rmp::encode::write_bool(&mut buf, is_fd)?;
-                let mut buf = &mut buf[1..];
-
-                let bitrate_switch = frame
+                    .contains(GsHostFrameFlag::GsCanFlagFd))?;
+             
+                 encode::write_str(wr, "bitrate_switch")?;
+                 encode::write_bool(wr, frame
                     .get_flags()
                     .unwrap()
                     .0
-                    .contains(GsHostFrameFlag::GsCanFlagBrs);
-                rmp::encode::write_bool(&mut buf, bitrate_switch)?;
-                let mut buf = &mut buf[1..];
-
-                let error_state_indicator = frame
+                    .contains(GsHostFrameFlag::GsCanFlagBrs))?;
+             
+                 encode::write_str(wr, "error_state_indicator")?;
+                 encode::write_bool(wr, frame
                     .get_flags()
                     .unwrap()
                     .0
-                    .contains(GsHostFrameFlag::GsCanFlagEsi);
-                rmp::encode::write_bool(&mut buf, error_state_indicator)?;
-                let buf = &mut buf[1..];
-
-                return Ok(buffer_len - buf.len());
+                    .contains(GsHostFrameFlag::GsCanFlagEsi))?;
+              
+                return Ok(wr.len());
             }
             HostFrame::FdTs(frame) => {
-                let mut buf = &mut buffer[..];
-
-                let timestamp = frame.timestamp.get() as f32 / 1_000_000f32;
-                rmp::encode::write_f32(&mut buf, timestamp)?;
-                let mut buf = &mut buf[5..];
-
-                let arbitration_id = frame.can_id.0.get() as i64;
-                let marker = rmp::encode::write_sint(&mut buf, arbitration_id)?;
-                let mut buf = &mut buf[marker.len()..];
-
-                let is_extended_id = frame.can_id.extended();
-                rmp::encode::write_bool(&mut buf, is_extended_id)?;
-                let mut buf = &mut buf[1..];
-
-                let is_remote_frame = frame.can_id.rtr();
-                rmp::encode::write_bool(&mut buf, is_remote_frame)?;
-                let mut buf = &mut buf[1..];
-
-                let is_error_frame = frame.can_id.err();
-                rmp::encode::write_bool(&mut buf, is_error_frame)?;
-                let mut buf = &mut buf[1..];
-
-                let channel = frame.channel as i32;
-                rmp::encode::write_i32(&mut buf, channel)?;
-                let mut buf = &mut buf[5..];
-
-                let dlc = frame.can_dlc;
-                rmp::encode::write_i32(&mut buf, dlc as i32)?;
-                let mut buf = &mut buf[5..];
-
-                let len = dlc_to_len(dlc);
-                let data_marker = rmp::encode::write_array_len(&mut buf, len as u32)?;
-                let mut buf = &mut buf[data_marker.len()..];
-
-                rmp::encode::write_bin(&mut buf, &frame.data[..len as usize])?;
-                let mut buf = &mut buf[len as usize..];
-
-                let is_fd = frame
-                    .get_flags()
-                    .unwrap()
-                    .0
-                    .contains(GsHostFrameFlag::GsCanFlagFd);
-                rmp::encode::write_bool(&mut buf, is_fd)?;
-                let mut buf = &mut buf[1..];
-
-                let bitrate_switch = frame
-                    .get_flags()
-                    .unwrap()
-                    .0
-                    .contains(GsHostFrameFlag::GsCanFlagBrs);
-                rmp::encode::write_bool(&mut buf, bitrate_switch)?;
-                let mut buf = &mut buf[1..];
-
-                let error_state_indicator = frame
-                    .get_flags()
-                    .unwrap()
-                    .0
-                    .contains(GsHostFrameFlag::GsCanFlagEsi);
-                rmp::encode::write_bool(&mut buf, error_state_indicator)?;
-                let buf = &mut buf[1..];
-
-                return Ok(buffer_len - buf.len());
+                
+                encode::write_map_len(wr, 11)?;
+             
+                encode::write_str(wr, "timestamp")?;
+                encode::write_f64(wr, frame.timestamp.get() as f64 / 1_000_000f64)?;
+                
+                encode::write_str(wr, "arbitration_id")?;
+                encode::write_uint(wr, frame.can_id.0.get() as u64)?;
+            
+                encode::write_str(wr, "is_extended_id")?;
+                encode::write_bool(wr, frame.can_id.extended())?;
+            
+                encode::write_str(wr, "is_remote_frame")?;
+                encode::write_bool(wr, frame.can_id.rtr())?;
+            
+                encode::write_str(wr, "is_error_frame")?;
+                encode::write_bool(wr, frame.can_id.err())?;
+            
+                encode::write_str(wr, "channel")?;
+                encode::write_uint(wr, frame.channel as u64)?;
+            
+                encode::write_str(wr, "dlc")?;
+                encode::write_uint(wr,  frame.can_dlc as u64)?;
+            
+                encode::write_str(wr, "data")?;
+                let data = &frame.data[..dlc_to_len(frame.can_dlc) as usize];
+                encode::write_bin(wr, &data[..] )?;
+            
+                encode::write_str(wr, "is_fd")?;
+                encode::write_bool(wr, frame
+                   .get_flags()
+                   .unwrap()
+                   .0
+                   .contains(GsHostFrameFlag::GsCanFlagFd))?;
+            
+                encode::write_str(wr, "bitrate_switch")?;
+                encode::write_bool(wr, frame
+                   .get_flags()
+                   .unwrap()
+                   .0
+                   .contains(GsHostFrameFlag::GsCanFlagBrs))?;
+            
+                encode::write_str(wr, "error_state_indicator")?;
+                encode::write_bool(wr, frame
+                   .get_flags()
+                   .unwrap()
+                   .0
+                   .contains(GsHostFrameFlag::GsCanFlagEsi))?;
+             
+               return Ok(wr.len());
             }
         }
     }
