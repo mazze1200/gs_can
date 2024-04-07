@@ -55,6 +55,10 @@ default-features = false
 # version = "0.4"
 # default-features = false
 
+[[bin]]
+name = "gs_can"
+test = false
+bench = false
 
 # cargo build/run
 [profile.dev]
