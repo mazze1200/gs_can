@@ -334,9 +334,25 @@ async fn main(spawner: Spawner) {
     );
 
     udp_socket.bind(0).unwrap();
-    // let udp_listen_endpoint = udp_socket.endpoint();
 
     let remote_udp_address = (Ipv4Address::new(239, 74, 163, 2), 43113);
+
+    let eth_rx = pin!(stream::unfold(
+        (&udp_socket, [0u8; 256]),
+        |(udp_socket, mut buffer)| async move {
+            loop {
+                match udp_socket.recv_from(&mut buffer).await {
+                    Ok((size, _)) => match gs_can::msgpack_info_fdframe(&buffer[..size]) {
+                        Ok((fd_frame, channel)) => {
+                            return Some((Event::EthRx(fd_frame, channel), (udp_socket, buffer)))
+                        }
+                        Err(_err) => warn!("Could not parse msg_pack CAN message"),
+                    },
+                    Err(error) => warn!("Invalid udp message {:?}", error),
+                }
+            }
+        }
+    ));
 
     info!("Ethernet configured");
 
@@ -449,24 +465,6 @@ async fn main(spawner: Spawner) {
 
     info!("USB Configured");
 
-    let eth_msgpack_rx = pin!(stream::unfold(
-        (&udp_socket, [0u8; 256]),
-        |(udp_socket, mut buffer)| async move {
-            loop {
-                match udp_socket.recv_from(&mut buffer).await {
-                    Ok((size, _)) => match gs_can::msgpack_info_fdframe(&buffer[..size]) {
-                        Ok((fd_frame, channel)) => {
-                            return Some((Event::EthRx(fd_frame, channel), (udp_socket, buffer)))
-                        }
-                        Err(err) => warn!("Could not parse msg_pack CAN message"),
-                    },
-
-                    Err(error) => warn!("Invalid udp message {:?}", error),
-                }
-            }
-        }
-    ));
-
     let mut selectors = pin!(select(
         select(
             select(can_rx_stream_0, can_rx_stream_1),
@@ -474,7 +472,7 @@ async fn main(spawner: Spawner) {
         ),
         select(
             select(can_rx_stream_2, can_tx_event_stream_2),
-            select(usb_rx, eth_msgpack_rx)
+            select(usb_rx, eth_rx)
         )
     ));
 
