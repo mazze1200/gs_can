@@ -8,6 +8,7 @@ use core::ops::BitOrAssign;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use defmt::{debug, info, warn};
+use embassy_stm32::can::enums::FrameCreateError;
 use embassy_stm32::can::{
     config::{DataBitTiming, NominalBitTiming},
     frame::{FdFrame, Header},
@@ -20,6 +21,7 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 
 use rmp::encode::{self, RmpWriteErr, ValueWriteError};
+use rmp::{errors, reader};
 use zerocopy_derive::{AsBytes, FromBytes};
 
 use embassy_usb::control::{self, InResponse, OutResponse, Recipient, Request, RequestType};
@@ -32,7 +34,6 @@ use embassy_usb::{Builder, Handler};
 use zerocopy::{AsBytes, FromZeroes, Ref};
 use zerocopy_derive::FromZeroes;
 
-use rmp::encode::RmpWrite;
 use zerocopy::byteorder::little_endian::U32;
 
 use futures::prelude::*;
@@ -409,31 +410,58 @@ impl From<u8> for GsHostFrameFlags {
     }
 }
 
-pub fn dlc_to_len(dlc: u8) -> u8 {
+#[derive(Debug)]
+pub enum DlcError {
+    DlcOver15,
+    LenOver64,
+    InvalidLen,
+}
+
+pub fn dlc_to_len(dlc: u8) -> Result<u8, DlcError> {
     match dlc {
-        0..=8 => dlc,
-        9 => 12,
-        10 => 16,
-        11 => 20,
-        12 => 24,
-        13 => 32,
-        14 => 48,
-        15 => 64,
-        _ => panic!("DLC > 15"),
+        0..=8 => Ok(dlc),
+        9 => Ok(12),
+        10 => Ok(16),
+        11 => Ok(20),
+        12 => Ok(24),
+        13 => Ok(32),
+        14 => Ok(48),
+        15 => Ok(64),
+        _ => Err(DlcError::DlcOver15),
     }
 }
 
-pub fn len_to_dlc(len: u8) -> u8 {
+pub fn round_len_to_dlc(len: u8) -> Result<u8, DlcError> {
     match len {
-        0..=8 => len,
-        9..=12 => 9,
-        13..=16 => 10,
-        17..=20 => 11,
-        21..=24 => 12,
-        25..=32 => 13,
-        33..=48 => 14,
-        49..=64 => 15,
-        _ => panic!("DataLength > 64"),
+        0..=8 => Ok(len),
+        9..=12 => Ok(9),
+        13..=16 => Ok(10),
+        17..=20 => Ok(11),
+        21..=24 => Ok(12),
+        25..=32 => Ok(13),
+        33..=48 => Ok(14),
+        49..=64 => Ok(15),
+        _ => Err(DlcError::LenOver64),
+    }
+}
+
+pub fn len_to_dlc(len: u8) -> Result<u8, DlcError> {
+    match len {
+        0..=8 => Ok(len),
+        12 => Ok(9),
+        16 => Ok(10),
+        20 => Ok(11),
+        24 => Ok(12),
+        32 => Ok(13),
+        48 => Ok(14),
+        64 => Ok(15),
+        _ => {
+            if len > 64 {
+                Err(DlcError::LenOver64)
+            } else {
+                Err(DlcError::InvalidLen)
+            }
+        }
     }
 }
 
@@ -598,8 +626,67 @@ pub enum HostFrame {
     FdTs(GsHostFrameFdTs),
 }
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MsgpackUnpackError {
+    MsgPackError(errors::Error),
+    MissingId,
+    InvalidId,
+    MissingExtended,
+    MissingData,
+    MissingChannel,
+    MissingDlc,
+    InvalidDlc(DlcError),
+    FrameCreateError(FrameCreateError)
+}
+
+impl From<FrameCreateError> for MsgpackUnpackError {
+    fn from(value: FrameCreateError) -> Self {
+        MsgpackUnpackError::FrameCreateError(value)
+    }
+}
+
+impl From<errors::Error> for MsgpackUnpackError {
+    fn from(value: errors::Error) -> Self {
+        MsgpackUnpackError::MsgPackError(value)
+    }
+}
+
+impl From<(core::str::Utf8Error, &[u8])> for MsgpackUnpackError {
+    fn from(value: (core::str::Utf8Error, &[u8])) -> Self {
+        MsgpackUnpackError::MsgPackError(value.into())
+    }
+}
+
+impl From<DlcError> for MsgpackUnpackError {
+    fn from(value: DlcError) -> Self {
+        MsgpackUnpackError::InvalidDlc(value)
+    }
+}
+
+impl<E: RmpWriteErr> From<ValueWriteError<E>> for MsgpackUnpackError  {
+    fn from(value: ValueWriteError<E>) -> Self {
+        let error : errors::Error = value.into();
+        MsgpackUnpackError::MsgPackError(error)
+
+    }
+}
+
+// impl<T : ?Sized> From<<T: Into<errors::Error>>> for MsgpackUnpackError 
+// where errors::Error: From<T>
+//  {
+//     fn from(value: T) -> Self {
+//         todo!()
+//     }
+//  }
+
 impl HostFrame {
-    pub fn new_from(frame: &FdFrame, channel: u8, echo_id: u32, timestamp: u32) -> Self {
+    pub fn new_from(
+        frame: &FdFrame,
+        channel: u8,
+        echo_id: u32,
+        timestamp: u32,
+    ) -> Result<Self, DlcError> {
         let header = frame.header();
         let id = match header.id() {
             Id::Standard(id) => GsCanId::new(id.as_raw() as u32, false, header.rtr(), false),
@@ -609,7 +696,7 @@ impl HostFrame {
         if header.fdcan() {
             let mut hf = GsHostFrameFdTs::new_zeroed();
             hf.can_id = id;
-            hf.can_dlc = len_to_dlc(header.len());
+            hf.can_dlc = len_to_dlc(header.len())?;
             hf.channel = channel;
             hf.echo_id.set(echo_id);
             hf.timestamp.set(timestamp);
@@ -621,17 +708,17 @@ impl HostFrame {
                 GsHostFrameFlags::new(GsHostFrameFlag::GsCanFlagFd)
             });
 
-            HostFrame::FdTs(hf)
+            Ok(HostFrame::FdTs(hf))
         } else {
             let mut hf = GsHostFrameClassicTs::new_zeroed();
             hf.can_id = id;
-            hf.can_dlc = len_to_dlc(header.len());
+            hf.can_dlc = len_to_dlc(header.len())?;
             hf.channel = channel;
             hf.echo_id.set(echo_id);
             hf.timestamp.set(timestamp);
             hf.data.copy_from_slice(&frame.data()[..8]);
 
-            HostFrame::ClassicTs(hf)
+            Ok(HostFrame::ClassicTs(hf))
         }
     }
 
@@ -656,9 +743,7 @@ impl HostFrame {
         }
     }
 
-    pub fn into_msgpack(&self, mut buffer: &mut [u8]) -> Result<usize, rmp::errors::Error>
-
-    {
+    pub fn into_msgpack(&self, mut buffer: &mut [u8]) -> Result<usize, MsgpackUnpackError> {
         /*
                 "timestamp": message.timestamp,
                 "arbitration_id": message.arbitration_id,
@@ -691,110 +776,256 @@ impl HostFrame {
 
         match self {
             HostFrame::ClassicTs(frame) => {
-                 encode::write_map_len(wr, 11)?;
-             
-                 encode::write_str(wr, "timestamp")?;
-                 encode::write_f64(wr, frame.timestamp.get() as f64 / 1_000_000f64)?;
-                 
-                 encode::write_str(wr, "arbitration_id")?;
-                 encode::write_uint(wr, frame.can_id.0.get() as u64)?;
-             
-                 encode::write_str(wr, "is_extended_id")?;
-                 encode::write_bool(wr, frame.can_id.extended())?;
-             
-                 encode::write_str(wr, "is_remote_frame")?;
-                 encode::write_bool(wr, frame.can_id.rtr())?;
-             
-                 encode::write_str(wr, "is_error_frame")?;
-                 encode::write_bool(wr, frame.can_id.err())?;
-             
-                 encode::write_str(wr, "channel")?;
-                 encode::write_uint(wr, frame.channel as u64)?;
-             
-                 encode::write_str(wr, "dlc")?;
-                 encode::write_uint(wr,  frame.can_dlc as u64)?;
-             
-                 encode::write_str(wr, "data")?;
-                 let data = &frame.data[..dlc_to_len(frame.can_dlc) as usize];
-                 encode::write_bin(wr, &data[..] )?;
-             
-                 encode::write_str(wr, "is_fd")?;
-                 encode::write_bool(wr, frame
-                    .get_flags()
-                    .unwrap()
-                    .0
-                    .contains(GsHostFrameFlag::GsCanFlagFd))?;
-             
-                 encode::write_str(wr, "bitrate_switch")?;
-                 encode::write_bool(wr, frame
-                    .get_flags()
-                    .unwrap()
-                    .0
-                    .contains(GsHostFrameFlag::GsCanFlagBrs))?;
-             
-                 encode::write_str(wr, "error_state_indicator")?;
-                 encode::write_bool(wr, frame
-                    .get_flags()
-                    .unwrap()
-                    .0
-                    .contains(GsHostFrameFlag::GsCanFlagEsi))?;
-              
+                encode::write_map_len(wr, 11)?;
+
+                encode::write_str(wr, "timestamp")?;
+                encode::write_f64(wr, frame.timestamp.get() as f64 / 1_000_000f64)?;
+
+                encode::write_str(wr, "arbitration_id")?;
+                encode::write_uint(wr, frame.can_id.id() as u64)?;
+
+                encode::write_str(wr, "is_extended_id")?;
+                encode::write_bool(wr, frame.can_id.extended())?;
+
+                encode::write_str(wr, "is_remote_frame")?;
+                encode::write_bool(wr, frame.can_id.rtr())?;
+
+                encode::write_str(wr, "is_error_frame")?;
+                encode::write_bool(wr, frame.can_id.err())?;
+
+                encode::write_str(wr, "channel")?;
+                encode::write_uint(wr, frame.channel as u64)?;
+
+                encode::write_str(wr, "dlc")?;
+                encode::write_uint(wr, frame.can_dlc as u64)?;
+
+                encode::write_str(wr, "data")?;
+                let data = &frame.data[..dlc_to_len(frame.can_dlc)? as usize];
+                encode::write_bin(wr, &data[..])?;
+
+                encode::write_str(wr, "is_fd")?;
+                encode::write_bool(
+                    wr,
+                    frame
+                        .get_flags()
+                        .unwrap()
+                        .0
+                        .contains(GsHostFrameFlag::GsCanFlagFd),
+                )?;
+
+                encode::write_str(wr, "bitrate_switch")?;
+                encode::write_bool(
+                    wr,
+                    frame
+                        .get_flags()
+                        .unwrap()
+                        .0
+                        .contains(GsHostFrameFlag::GsCanFlagBrs),
+                )?;
+
+                encode::write_str(wr, "error_state_indicator")?;
+                encode::write_bool(
+                    wr,
+                    frame
+                        .get_flags()
+                        .unwrap()
+                        .0
+                        .contains(GsHostFrameFlag::GsCanFlagEsi),
+                )?;
+
                 return Ok(wr.len());
             }
             HostFrame::FdTs(frame) => {
-                
                 encode::write_map_len(wr, 11)?;
-             
+
                 encode::write_str(wr, "timestamp")?;
                 encode::write_f64(wr, frame.timestamp.get() as f64 / 1_000_000f64)?;
-                
+
                 encode::write_str(wr, "arbitration_id")?;
-                encode::write_uint(wr, frame.can_id.0.get() as u64)?;
-            
+                encode::write_uint(wr, frame.can_id.id() as u64)?;
+
                 encode::write_str(wr, "is_extended_id")?;
                 encode::write_bool(wr, frame.can_id.extended())?;
-            
+
                 encode::write_str(wr, "is_remote_frame")?;
                 encode::write_bool(wr, frame.can_id.rtr())?;
-            
+
                 encode::write_str(wr, "is_error_frame")?;
                 encode::write_bool(wr, frame.can_id.err())?;
-            
+
                 encode::write_str(wr, "channel")?;
                 encode::write_uint(wr, frame.channel as u64)?;
-            
+
                 encode::write_str(wr, "dlc")?;
-                encode::write_uint(wr,  frame.can_dlc as u64)?;
-            
+                encode::write_uint(wr, frame.can_dlc as u64)?;
+
                 encode::write_str(wr, "data")?;
-                let data = &frame.data[..dlc_to_len(frame.can_dlc) as usize];
-                encode::write_bin(wr, &data[..] )?;
-            
+                let data = &frame.data[..dlc_to_len(frame.can_dlc)? as usize];
+                encode::write_bin(wr, &data[..])?;
+
                 encode::write_str(wr, "is_fd")?;
-                encode::write_bool(wr, frame
-                   .get_flags()
-                   .unwrap()
-                   .0
-                   .contains(GsHostFrameFlag::GsCanFlagFd))?;
-            
+                encode::write_bool(
+                    wr,
+                    frame
+                        .get_flags()
+                        .unwrap()
+                        .0
+                        .contains(GsHostFrameFlag::GsCanFlagFd),
+                )?;
+
                 encode::write_str(wr, "bitrate_switch")?;
-                encode::write_bool(wr, frame
-                   .get_flags()
-                   .unwrap()
-                   .0
-                   .contains(GsHostFrameFlag::GsCanFlagBrs))?;
-            
+                encode::write_bool(
+                    wr,
+                    frame
+                        .get_flags()
+                        .unwrap()
+                        .0
+                        .contains(GsHostFrameFlag::GsCanFlagBrs),
+                )?;
+
                 encode::write_str(wr, "error_state_indicator")?;
-                encode::write_bool(wr, frame
-                   .get_flags()
-                   .unwrap()
-                   .0
-                   .contains(GsHostFrameFlag::GsCanFlagEsi))?;
-             
-               return Ok(wr.len());
+                encode::write_bool(
+                    wr,
+                    frame
+                        .get_flags()
+                        .unwrap()
+                        .0
+                        .contains(GsHostFrameFlag::GsCanFlagEsi),
+                )?;
+
+                return Ok(wr.len());
             }
         }
     }
+}
+
+
+pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<FdFrame, MsgpackUnpackError> {
+    let reader = reader::Reader::new(buffer);
+
+    let mut timestamp: Option<f64> = None;
+    let mut arbitration_id: Result<u64, MsgpackUnpackError> =
+        Err(MsgpackUnpackError::MissingId);
+    let mut is_extended_id: Result<bool, MsgpackUnpackError> =
+        Err(MsgpackUnpackError::MissingExtended);
+    let mut is_remote_frame: Option<bool> = None;
+    let mut is_error_frame: Option<bool> = None;
+    let mut channel: Result<u64, MsgpackUnpackError> = Err(MsgpackUnpackError::MissingChannel);
+    let mut dlc: Result<u64, MsgpackUnpackError> = Err(MsgpackUnpackError::MissingDlc);
+    let mut data: Result<&[u8], MsgpackUnpackError> = Err(MsgpackUnpackError::MissingData);
+    let mut is_fd: Option<bool> = None;
+    let mut bitrate_switch: Option<bool> = None;
+    let mut error_state_indicator: Option<bool> = None;
+
+    if let Some(res) = reader.into_iter().next() {
+        if let reader::ReadResult::Map(_marker, map_reader) = res? {
+            for tuple in map_reader.into_iter() {
+                match tuple {
+                    Ok((key, val)) => match key {
+                        reader::ReadResult::Str(_, key) => {
+                            let key = key?;
+                            match key {
+                                "timestamp" => match val {
+                                    reader::ReadResult::Float(_, val) => timestamp = Some(val),
+                                    _ => {}
+                                },
+                                "arbitration_id" => match val {
+                                    reader::ReadResult::UInt(_, val) => {
+                                        arbitration_id = Ok(val)
+                                    }
+                                    _ => {}
+                                },
+                                "is_extended_id" => match val {
+                                    reader::ReadResult::Bool(_, val) => {
+                                        is_extended_id = Ok(val)
+                                    }
+                                    _ => {}
+                                },
+                                "is_remote_frame" => match val {
+                                    reader::ReadResult::Bool(_, val) => {
+                                        is_remote_frame = Some(val)
+                                    }
+                                    _ => {}
+                                },
+                                "is_error_frame" => match val {
+                                    reader::ReadResult::Bool(_, val) => {
+                                        is_error_frame = Some(val)
+                                    }
+                                    _ => {}
+                                },
+                                "channel" => match val {
+                                    reader::ReadResult::UInt(_, val) => channel = Ok(val),
+                                    _ => {}
+                                },
+                                "dlc" => match val {
+                                    reader::ReadResult::UInt(_, val) => dlc = Ok(val),
+                                    _ => {}
+                                },
+                                "data" => match val {
+                                    reader::ReadResult::Bin(_, val) => data = Ok(val),
+                                    _ => {}
+                                },
+                                "is_fd" => match val {
+                                    reader::ReadResult::Bool(_, val) => is_fd = Some(val),
+                                    _ => {}
+                                },
+                                "bitrate_switch" => match val {
+                                    reader::ReadResult::Bool(_, val) => {
+                                        bitrate_switch = Some(val)
+                                    }
+                                    _ => {}
+                                },
+                                "error_state_indicator" => match val {
+                                    reader::ReadResult::Bool(_, val) => {
+                                        error_state_indicator = Some(val)
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                        _ => {
+                            return Err(MsgpackUnpackError::MsgPackError(
+                                rmp::errors::Error::InvalidMarker,
+                            ))
+                        }
+                    },
+                    Err(_err) => {
+                        return Err(MsgpackUnpackError::MsgPackError(
+                            rmp::errors::Error::ValueReadError,
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    let id = match is_extended_id? {
+        true => embedded_can::Id::Extended(
+            ExtendedId::new(arbitration_id? as u32)
+                .unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
+        ),
+        false => embedded_can::Id::Standard(
+            StandardId::new(arbitration_id? as u16)
+                .unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
+        ),
+    };
+
+    let header = match is_fd {
+        Some(true) => Header::new_fd(
+            id,
+            dlc_to_len(dlc? as u8)? as u8,
+            is_remote_frame.unwrap_or(false),
+            bitrate_switch.unwrap_or(false),
+        ),
+        None | Some(false) => Header::new(
+            id,
+            dlc_to_len(dlc? as u8)? as u8,
+            is_remote_frame.unwrap_or(false),
+        ),
+    };
+
+    Ok(FdFrame::new(header, data?)?)
 }
 
 impl<'a> Into<&'a [u8]> for &'a HostFrame {
@@ -806,10 +1037,10 @@ impl<'a> Into<&'a [u8]> for &'a HostFrame {
     }
 }
 
-impl Into<FdFrame> for &HostFrame {
-    fn into(self) -> FdFrame {
+impl Into<Result<FdFrame, DlcError>> for &HostFrame {
+    fn into(self) -> Result<FdFrame, DlcError> {
         match self {
-            HostFrame::ClassicTs(frame) => FdFrame::new(
+            HostFrame::ClassicTs(frame) => Ok(FdFrame::new(
                 Header::new(
                     if frame.can_id.extended() {
                         embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
@@ -818,19 +1049,18 @@ impl Into<FdFrame> for &HostFrame {
                             StandardId::new(frame.can_id.id() as u16).unwrap(),
                         )
                     },
-                    dlc_to_len(frame.can_dlc),
+                    dlc_to_len(frame.can_dlc)?,
                     frame.can_id.rtr(),
                 ),
                 &frame.data[..],
-            )
-            .unwrap(),
+            ).unwrap()),
             HostFrame::FdTs(frame) => match frame
                 .get_flags()
                 .unwrap()
                 .0
                 .contains(GsHostFrameFlag::GsCanFlagFd)
             {
-                true => FdFrame::new(
+                true => Ok(FdFrame::new(
                     Header::new_fd(
                         if frame.can_id.extended() {
                             embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
@@ -839,7 +1069,7 @@ impl Into<FdFrame> for &HostFrame {
                                 StandardId::new(frame.can_id.id() as u16).unwrap(),
                             )
                         },
-                        dlc_to_len(frame.can_dlc),
+                        dlc_to_len(frame.can_dlc)?,
                         frame.can_id.rtr(),
                         frame
                             .get_flags()
@@ -849,8 +1079,8 @@ impl Into<FdFrame> for &HostFrame {
                     ),
                     &frame.data[..],
                 )
-                .unwrap(),
-                false => FdFrame::new(
+                .unwrap()),
+                false => Ok(FdFrame::new(
                     Header::new(
                         if frame.can_id.extended() {
                             embedded_can::Id::Extended(ExtendedId::new(frame.can_id.id()).unwrap())
@@ -859,12 +1089,12 @@ impl Into<FdFrame> for &HostFrame {
                                 StandardId::new(frame.can_id.id() as u16).unwrap(),
                             )
                         },
-                        dlc_to_len(frame.can_dlc),
+                        dlc_to_len(frame.can_dlc)?,
                         frame.can_id.rtr(),
                     ),
                     &frame.data[..8],
                 )
-                .unwrap(),
+                .unwrap()),
             },
         }
     }
