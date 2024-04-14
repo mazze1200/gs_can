@@ -84,6 +84,8 @@ pub enum Event {
     /// CAN bus error
     /// Channel index
     CanErr(u8),
+    /// CAN frame received over ethernet to be send on channel
+    EthRx(embassy_stm32::can::frame::FdFrame, u8),
 }
 
 fn create_can_rx_stream<'d, I: Instance>(
@@ -332,7 +334,7 @@ async fn main(spawner: Spawner) {
     );
 
     udp_socket.bind(0).unwrap();
-    let udp_listen_endpoint = udp_socket.endpoint();
+    // let udp_listen_endpoint = udp_socket.endpoint();
 
     let remote_udp_address = (Ipv4Address::new(239, 74, 163, 2), 43113);
 
@@ -408,6 +410,7 @@ async fn main(spawner: Spawner) {
         None
     }));
 
+    let tx_udp_socket = &udp_socket;
     let usb_eth_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
     let usb_eth_tx_fut = async {
         let mut udp_buffer = [0u8; 256];
@@ -422,7 +425,7 @@ async fn main(spawner: Spawner) {
 
                 let (usb_tx_res, eth_tx_res) = join(
                     usb_tx.write_frame(&frame),
-                    udp_socket.send_to(&udp_buffer[..udp_frame_size], remote_udp_address),
+                    tx_udp_socket.send_to(&udp_buffer[..udp_frame_size], remote_udp_address),
                 )
                 .await;
 
@@ -434,7 +437,7 @@ async fn main(spawner: Spawner) {
                     warn!("Add ETH error handling!");
                 }
             } else {
-                if let Err(_) = udp_socket
+                if let Err(_) = tx_udp_socket
                     .send_to(&udp_buffer[..udp_frame_size], remote_udp_address)
                     .await
                 {
@@ -446,39 +449,33 @@ async fn main(spawner: Spawner) {
 
     info!("USB Configured");
 
-    // let eth_msgpack_rx = pin!(stream::unfold((udp_listen_endpoint, [0u8;256]), |(mut udp_socket, mut buffer)| async move {
-    //     match udp_socket.recv_from(&mut buffer).await {
-    //         Ok((size,_)) => 
-    //            return  Some(( gs_can::msgpack_info_fdframe(&buffer[..size]), (udp_socket, buffer))),
+    let eth_msgpack_rx = pin!(stream::unfold(
+        (&udp_socket, [0u8; 256]),
+        |(udp_socket, mut buffer)| async move {
+            loop {
+                match udp_socket.recv_from(&mut buffer).await {
+                    Ok((size, _)) => match gs_can::msgpack_info_fdframe(&buffer[..size]) {
+                        Ok((fd_frame, channel)) => {
+                            return Some((Event::EthRx(fd_frame, channel), (udp_socket, buffer)))
+                        }
+                        Err(err) => warn!("Could not parse msg_pack CAN message"),
+                    },
 
-    //         //   match {
-    //         //       Ok(frame) => {
-    //         //         return Some(frame);
-    //         //       },
-    //         //       Err(error) => warn!("Invalid messagepack frame"),
-    //         //   }
-    //         // },
-    //         Err(error) => warn!("Invalid udp message {:?}", error),
-    //     }
-    
-    //     // usb_rx.wait_connection().await;
-    //     // debug!("USB RX connected");
-    //     // let frame = usb_rx.read_frame().await;
-    //     // debug!("Read Frame from USB");
-    //     // match frame {
-    //     //     Ok(frame) => return Some((Event::UsbRx(frame), usb_rx)),
-    //     //     Err(error) => warn!("Invalid Frame: Error {:?}", error),
-    //     // };
-
-    //     None
-    // }));
+                    Err(error) => warn!("Invalid udp message {:?}", error),
+                }
+            }
+        }
+    ));
 
     let mut selectors = pin!(select(
         select(
             select(can_rx_stream_0, can_rx_stream_1),
             select(can_tx_event_stream_0, can_tx_event_stream_1)
         ),
-        select(select(can_rx_stream_2, can_tx_event_stream_2), usb_rx)
+        select(
+            select(can_rx_stream_2, can_tx_event_stream_2),
+            select(usb_rx, eth_msgpack_rx)
+        )
     ));
 
     static GS_HOST_FRAMES: StaticCell<[[Option<HostFrame>; 10]; 3]> = StaticCell::new();
@@ -568,6 +565,9 @@ async fn main(spawner: Spawner) {
                 }
                 Event::CanErr(_channel) => {
                     let _ = red_led_channel.try_send(());
+                }
+                Event::EthRx(frame, channel) => {
+                    can_tx_channel.send((frame, channel, None)).await;
                 }
             }
         }
