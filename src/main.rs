@@ -332,6 +332,8 @@ async fn main(spawner: Spawner) {
     );
 
     udp_socket.bind(0).unwrap();
+    let udp_listen_endpoint = udp_socket.endpoint();
+
     let remote_udp_address = (Ipv4Address::new(239, 74, 163, 2), 43113);
 
     info!("Ethernet configured");
@@ -408,7 +410,7 @@ async fn main(spawner: Spawner) {
 
     let usb_eth_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
     let usb_eth_tx_fut = async {
-        let mut udp_buffer = [0u8;256];
+        let mut udp_buffer = [0u8; 256];
         loop {
             let frame = usb_eth_tx_channel.receive().await;
             // let frame_ref = (&frame).into();
@@ -432,7 +434,10 @@ async fn main(spawner: Spawner) {
                     warn!("Add ETH error handling!");
                 }
             } else {
-                if let Err(_) = udp_socket.send_to(&udp_buffer[..udp_frame_size], remote_udp_address).await {
+                if let Err(_) = udp_socket
+                    .send_to(&udp_buffer[..udp_frame_size], remote_udp_address)
+                    .await
+                {
                     warn!("Add ETH error handling!");
                 }
             }
@@ -440,6 +445,33 @@ async fn main(spawner: Spawner) {
     };
 
     info!("USB Configured");
+
+    // let eth_msgpack_rx = pin!(stream::unfold((udp_listen_endpoint, [0u8;256]), |(mut udp_socket, mut buffer)| async move {
+    //     match udp_socket.recv_from(&mut buffer).await {
+    //         Ok((size,_)) => 
+    //            return  Some(( gs_can::msgpack_info_fdframe(&buffer[..size]), (udp_socket, buffer))),
+
+    //         //   match {
+    //         //       Ok(frame) => {
+    //         //         return Some(frame);
+    //         //       },
+    //         //       Err(error) => warn!("Invalid messagepack frame"),
+    //         //   }
+    //         // },
+    //         Err(error) => warn!("Invalid udp message {:?}", error),
+    //     }
+    
+    //     // usb_rx.wait_connection().await;
+    //     // debug!("USB RX connected");
+    //     // let frame = usb_rx.read_frame().await;
+    //     // debug!("Read Frame from USB");
+    //     // match frame {
+    //     //     Ok(frame) => return Some((Event::UsbRx(frame), usb_rx)),
+    //     //     Err(error) => warn!("Invalid Frame: Error {:?}", error),
+    //     // };
+
+    //     None
+    // }));
 
     let mut selectors = pin!(select(
         select(
@@ -468,12 +500,13 @@ async fn main(spawner: Spawner) {
                         frame.header().bit_rate_switching()
                     );
 
-                    let host_frame =
-                        HostFrame::new_from(&frame, channel, u32::MAX, ts.as_micros() as u32);
+                    if let Ok(host_frame) =
+                        HostFrame::new_from(&frame, channel, u32::MAX, ts.as_micros() as u32)
+                    {
+                        usb_eth_tx_channel.send(host_frame).await;
 
-                    usb_eth_tx_channel.send(host_frame).await;
-
-                    let _ = green_led_channel.try_send(());
+                        let _ = green_led_channel.try_send(());
+                    }
                 }
                 Event::CanTx(echo_id, ts, channel) => {
                     debug!(
@@ -503,31 +536,35 @@ async fn main(spawner: Spawner) {
                     warn!("Add error handling!");
                 }
                 Event::UsbRx(frame) => {
-                    let can_frame: FdFrame = (&frame).into();
+                    let can_frame: Result<FdFrame, _> = (&frame).into();
 
-                    let channel = frame.get_channel() as usize;
-                    let echo_id = frame.get_echo_id() as usize;
+                    if let Ok(can_frame) = can_frame {
+                        let channel = frame.get_channel() as usize;
+                        let echo_id = frame.get_echo_id() as usize;
 
-                    debug!(
-                        "UsbRx | Host Frame received. Channel: {}, Echo ID: {}",
-                        channel, echo_id
-                    );
+                        debug!(
+                            "UsbRx | Host Frame received. Channel: {}, Echo ID: {}",
+                            channel, echo_id
+                        );
 
-                    if let Some(channel_host_frames) = host_frames.get_mut(channel) {
-                        if let Some(host_frame) = channel_host_frames.get(echo_id) {
-                            if host_frame.is_none() {
-                                channel_host_frames[echo_id] = Some(frame);
+                        if let Some(channel_host_frames) = host_frames.get_mut(channel) {
+                            if let Some(host_frame) = channel_host_frames.get(echo_id) {
+                                if host_frame.is_none() {
+                                    channel_host_frames[echo_id] = Some(frame);
+                                } else {
+                                    warn!(
+                                        "UsbRx | Echo ID already in buffer. That should not happen"
+                                    );
+                                }
                             } else {
-                                warn!("UsbRx | Echo ID already in buffer. That should not happen");
+                                warn!("UsbRx | Echo ID out of bounds!");
                             }
-                        } else {
-                            warn!("UsbRx | Echo ID out of bounds!");
                         }
-                    }
 
-                    can_tx_channel
-                        .send((can_frame, channel as u8, Some(echo_id as u8)))
-                        .await;
+                        can_tx_channel
+                            .send((can_frame, channel as u8, Some(echo_id as u8)))
+                            .await;
+                    }
                 }
                 Event::CanErr(_channel) => {
                     let _ = red_led_channel.try_send(());
