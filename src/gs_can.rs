@@ -410,7 +410,8 @@ impl From<u8> for GsHostFrameFlags {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DlcError {
     DlcOver15,
     LenOver64,
@@ -626,7 +627,7 @@ pub enum HostFrame {
     FdTs(GsHostFrameFdTs),
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MsgpackUnpackError {
     MsgPackError(errors::Error),
@@ -637,7 +638,7 @@ pub enum MsgpackUnpackError {
     MissingChannel,
     MissingDlc,
     InvalidDlc(DlcError),
-    FrameCreateError(FrameCreateError)
+    FrameCreateError(FrameCreateError),
 }
 
 impl From<FrameCreateError> for MsgpackUnpackError {
@@ -664,15 +665,14 @@ impl From<DlcError> for MsgpackUnpackError {
     }
 }
 
-impl<E: RmpWriteErr> From<ValueWriteError<E>> for MsgpackUnpackError  {
+impl<E: RmpWriteErr> From<ValueWriteError<E>> for MsgpackUnpackError {
     fn from(value: ValueWriteError<E>) -> Self {
-        let error : errors::Error = value.into();
+        let error: errors::Error = value.into();
         MsgpackUnpackError::MsgPackError(error)
-
     }
 }
 
-// impl<T : ?Sized> From<<T: Into<errors::Error>>> for MsgpackUnpackError 
+// impl<T : ?Sized> From<<T: Into<errors::Error>>> for MsgpackUnpackError
 // where errors::Error: From<T>
 //  {
 //     fn from(value: T) -> Self {
@@ -899,13 +899,11 @@ impl HostFrame {
     }
 }
 
-
-pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<FdFrame, MsgpackUnpackError> {
+pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<(FdFrame, u8), MsgpackUnpackError> {
     let reader = reader::Reader::new(buffer);
 
     let mut timestamp: Option<f64> = None;
-    let mut arbitration_id: Result<u64, MsgpackUnpackError> =
-        Err(MsgpackUnpackError::MissingId);
+    let mut arbitration_id: Result<u64, MsgpackUnpackError> = Err(MsgpackUnpackError::MissingId);
     let mut is_extended_id: Result<bool, MsgpackUnpackError> =
         Err(MsgpackUnpackError::MissingExtended);
     let mut is_remote_frame: Option<bool> = None;
@@ -930,27 +928,19 @@ pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<FdFrame, MsgpackUnpackError
                                     _ => {}
                                 },
                                 "arbitration_id" => match val {
-                                    reader::ReadResult::UInt(_, val) => {
-                                        arbitration_id = Ok(val)
-                                    }
+                                    reader::ReadResult::UInt(_, val) => arbitration_id = Ok(val),
                                     _ => {}
                                 },
                                 "is_extended_id" => match val {
-                                    reader::ReadResult::Bool(_, val) => {
-                                        is_extended_id = Ok(val)
-                                    }
+                                    reader::ReadResult::Bool(_, val) => is_extended_id = Ok(val),
                                     _ => {}
                                 },
                                 "is_remote_frame" => match val {
-                                    reader::ReadResult::Bool(_, val) => {
-                                        is_remote_frame = Some(val)
-                                    }
+                                    reader::ReadResult::Bool(_, val) => is_remote_frame = Some(val),
                                     _ => {}
                                 },
                                 "is_error_frame" => match val {
-                                    reader::ReadResult::Bool(_, val) => {
-                                        is_error_frame = Some(val)
-                                    }
+                                    reader::ReadResult::Bool(_, val) => is_error_frame = Some(val),
                                     _ => {}
                                 },
                                 "channel" => match val {
@@ -970,9 +960,7 @@ pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<FdFrame, MsgpackUnpackError
                                     _ => {}
                                 },
                                 "bitrate_switch" => match val {
-                                    reader::ReadResult::Bool(_, val) => {
-                                        bitrate_switch = Some(val)
-                                    }
+                                    reader::ReadResult::Bool(_, val) => bitrate_switch = Some(val),
                                     _ => {}
                                 },
                                 "error_state_indicator" => match val {
@@ -1002,12 +990,10 @@ pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<FdFrame, MsgpackUnpackError
 
     let id = match is_extended_id? {
         true => embedded_can::Id::Extended(
-            ExtendedId::new(arbitration_id? as u32)
-                .unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
+            ExtendedId::new(arbitration_id? as u32).unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
         ),
         false => embedded_can::Id::Standard(
-            StandardId::new(arbitration_id? as u16)
-                .unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
+            StandardId::new(arbitration_id? as u16).unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
         ),
     };
 
@@ -1025,7 +1011,7 @@ pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<FdFrame, MsgpackUnpackError
         ),
     };
 
-    Ok(FdFrame::new(header, data?)?)
+    Ok((FdFrame::new(header, data?)?, channel? as u8))
 }
 
 impl<'a> Into<&'a [u8]> for &'a HostFrame {
@@ -1053,7 +1039,8 @@ impl Into<Result<FdFrame, DlcError>> for &HostFrame {
                     frame.can_id.rtr(),
                 ),
                 &frame.data[..],
-            ).unwrap()),
+            )
+            .unwrap()),
             HostFrame::FdTs(frame) => match frame
                 .get_flags()
                 .unwrap()
