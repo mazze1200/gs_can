@@ -19,6 +19,7 @@ use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::rcc::low_level::RccPeripheral;
 use embassy_stm32::rng::{self, Rng};
 use embassy_stm32::timer::low_level::CoreInstance;
+use embassy_stm32::usart::{self, Uart};
 use embassy_stm32::usb_otg::Driver;
 use embassy_stm32::{bind_interrupts, eth, peripherals, usb_otg, Config};
 use embassy_time::{Instant, Timer};
@@ -58,6 +59,14 @@ bind_interrupts!(struct Irqs {
     ETH => eth::InterruptHandler;
     RNG => rng::InterruptHandler<peripherals::RNG>;
     // TIM3 => timer::InterruptHandler;
+    USART2 => usart::InterruptHandler<peripherals::USART2>;
+    USART3 => usart::InterruptHandler<peripherals::USART3>;
+    UART4 => usart::InterruptHandler<peripherals::UART4>;
+    UART5 => usart::InterruptHandler<peripherals::UART5>;
+    USART6 => usart::InterruptHandler<peripherals::USART6>;
+    UART7 => usart::InterruptHandler<peripherals::UART7>;
+    UART9 => usart::InterruptHandler<peripherals::UART9>;
+    USART10 => usart::InterruptHandler<peripherals::USART10>;
 });
 
 type EthernetDevice = Ethernet<'static, ETH, GenericSMI>;
@@ -207,7 +216,7 @@ async fn main(spawner: Spawner) {
     tim3.start();
 
     // create can
-    let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, Irqs);
+    let mut can0 = can::FdcanConfigurator::new(p.FDCAN1, p.PB8, p.PB9, Irqs);
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(1_000_000, true);
     can0.set_tx_mode(can::config::TxBufferMode::Fifo);
@@ -464,6 +473,16 @@ async fn main(spawner: Spawner) {
     };
 
     info!("USB Configured");
+
+    // config uarts
+    let mut uart_2 = Uart::new(p.USART2, p.PA3, p.PD5, Irqs, p.DMA1_CH0, p.DMA1_CH1, usart::Config::default()).unwrap();
+    let mut uart_3 = Uart::new(p.USART3, p.PB11, p.PB10, Irqs, p.DMA1_CH2, p.DMA1_CH3, usart::Config::default()).unwrap();
+    let mut uart_4 = Uart::new(p.UART4 , p.PD0, p.PD1, Irqs, p.DMA1_CH4, p.DMA1_CH5, usart::Config::default()).unwrap();
+    let mut uart_5 = Uart::new(p.UART5, p.PD2, p.PC12, Irqs, p.DMA1_CH6, p.DMA1_CH7, usart::Config::default()).unwrap();
+    let mut uart_6 = Uart::new(p.USART6, p.PC7, p.PC6, Irqs, p.DMA2_CH0, p.DMA2_CH1, usart::Config::default()).unwrap();
+    let mut uart_7 = Uart::new(p.UART7, p.PE7, p.PE8, Irqs, p.DMA2_CH2, p.DMA2_CH3, usart::Config::default()).unwrap();
+    let mut uart_9 = Uart::new(p.UART9, p.PG0, p.PG1, Irqs, p.DMA2_CH4, p.DMA2_CH5, usart::Config::default()).unwrap();
+    let mut uart_10 = Uart::new(p.USART10, p.PE2, p.PE3, Irqs, p.DMA2_CH6, p.DMA2_CH7, usart::Config::default()).unwrap();
 
     let mut selectors = pin!(select(
         select(
