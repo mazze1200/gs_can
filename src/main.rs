@@ -475,14 +475,17 @@ async fn main(spawner: Spawner) {
     info!("USB Configured");
 
     // config uarts
-    let mut uart_2 = Uart::new(p.USART2, p.PA3, p.PD5, Irqs, p.DMA1_CH0, p.DMA1_CH1, usart::Config::default()).unwrap();
-    let mut uart_3 = Uart::new(p.USART3, p.PB11, p.PB10, Irqs, p.DMA1_CH2, p.DMA1_CH3, usart::Config::default()).unwrap();
-    let mut uart_4 = Uart::new(p.UART4 , p.PD0, p.PD1, Irqs, p.DMA1_CH4, p.DMA1_CH5, usart::Config::default()).unwrap();
-    let mut uart_5 = Uart::new(p.UART5, p.PD2, p.PC12, Irqs, p.DMA1_CH6, p.DMA1_CH7, usart::Config::default()).unwrap();
-    let mut uart_6 = Uart::new(p.USART6, p.PC7, p.PC6, Irqs, p.DMA2_CH0, p.DMA2_CH1, usart::Config::default()).unwrap();
-    let mut uart_7 = Uart::new(p.UART7, p.PE7, p.PE8, Irqs, p.DMA2_CH2, p.DMA2_CH3, usart::Config::default()).unwrap();
-    let mut uart_9 = Uart::new(p.UART9, p.PG0, p.PG1, Irqs, p.DMA2_CH4, p.DMA2_CH5, usart::Config::default()).unwrap();
-    let mut uart_10 = Uart::new(p.USART10, p.PE2, p.PE3, Irqs, p.DMA2_CH6, p.DMA2_CH7, usart::Config::default()).unwrap();
+    let mut uart_r3 = Uart::new(p.USART2, p.PA3, p.PD5, Irqs, p.DMA1_CH0, p.DMA1_CH1, usart::Config::default()).unwrap();
+    let mut uart_d2 = Uart::new(p.USART3, p.PB11, p.PB10, Irqs, p.DMA1_CH2, p.DMA1_CH3, usart::Config::default()).unwrap();
+    let mut uart_d4 = Uart::new(p.UART4 , p.PD0, p.PD1, Irqs, p.DMA1_CH4, p.DMA1_CH5, usart::Config::default()).unwrap();
+    let mut uart_r2 = Uart::new(p.UART5, p.PD2, p.PC12, Irqs, p.DMA1_CH6, p.DMA1_CH7, usart::Config::default()).unwrap();
+    let mut uart_r1 = Uart::new(p.USART6, p.PC7, p.PC6, Irqs, p.DMA2_CH0, p.DMA2_CH1, usart::Config::default()).unwrap();
+    let mut uart_d1 = Uart::new(p.UART7, p.PE7, p.PE8, Irqs, p.DMA2_CH2, p.DMA2_CH3, usart::Config::default()).unwrap();
+    let mut uart_d3 = Uart::new(p.UART9, p.PG0, p.PG1, Irqs, p.DMA2_CH4, p.DMA2_CH5, usart::Config::default()).unwrap();
+    let mut uart_r4 = Uart::new(p.USART10, p.PE2, p.PE3, Irqs, p.DMA2_CH6, p.DMA2_CH7, usart::Config::default()).unwrap();
+
+
+    info!("UARTs Configured");
 
     let mut selectors = pin!(select(
         select(
