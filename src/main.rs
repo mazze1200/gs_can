@@ -14,6 +14,7 @@ use embassy_stm32::can::frame::FdFrame;
 use embassy_stm32::can::{FdCanConfiguration, FdcanRx, FdcanTxEvent, Instance};
 use embassy_stm32::eth::generic_smi::GenericSMI;
 use embassy_stm32::eth::{Ethernet, PacketQueue};
+use embassy_stm32::flash::Async;
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::rcc::low_level::RccPeripheral;
@@ -21,7 +22,7 @@ use embassy_stm32::rng::{self, Rng};
 use embassy_stm32::timer::low_level::CoreInstance;
 use embassy_stm32::usart::{self, Uart};
 use embassy_stm32::usb_otg::Driver;
-use embassy_stm32::{bind_interrupts, eth, peripherals, usb_otg, Config};
+use embassy_stm32::{bind_interrupts, eth, peripherals, usb_otg, Config, Peripherals};
 use embassy_time::{Instant, Timer};
 
 use embassy_stm32::can;
@@ -73,6 +74,17 @@ type EthernetDevice = Ethernet<'static, ETH, GenericSMI>;
 
 type UsbDriver = Driver<'static, embassy_stm32::peripherals::USB_OTG_HS>;
 
+type UartDevice1 = Uart<'static, UART7, DMA2_CH2, DMA2_CH3>;
+type UartRouted1 = Uart<'static, USART6, DMA2_CH0, DMA2_CH1>;
+type UartDevice2 = Uart<'static, USART3, DMA1_CH2, DMA1_CH3>;
+type UartRouted2 = Uart<'static, UART5, DMA1_CH6, DMA1_CH7>;
+type UartDevice3 = Uart<'static, UART9, DMA2_CH4, DMA2_CH5>;
+type UartRouted3 = Uart<'static, USART2, DMA1_CH0, DMA1_CH1>;
+type UartDevice4 = Uart<'static, UART4, DMA1_CH4, DMA1_CH5>;
+type UartRouted4 = Uart<'static, USART10, DMA2_CH6, DMA2_CH7>;
+
+const UART_BUFFER_SIZE: usize = 32;
+
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<EthernetDevice>) -> ! {
     stack.run().await
@@ -81,6 +93,51 @@ async fn net_task(stack: &'static Stack<EthernetDevice>) -> ! {
 #[embassy_executor::task]
 async fn usb_task(mut device: UsbDevice<'static, UsbDriver>) -> ! {
     device.run().await
+}
+
+macro_rules! make_uart_bridge {
+    (  $device:ident, $routed:ident ) => {{
+        let (mut d_tx, mut d_rx) = $device.split();
+        let (mut r_tx, mut r_rx) = $routed.split();
+        let dr = async move {
+            let mut buf = [0u8; UART_BUFFER_SIZE];
+            loop {
+                if let Ok(count) = d_rx.read_until_idle(&mut buf).await {
+                    let _res = r_tx.write(&buf[..count]).await;
+                }
+            }
+        };
+
+        let rd = async move {
+            let mut buf = [0u8; UART_BUFFER_SIZE];
+            loop {
+                if let Ok(count) = r_rx.read_until_idle(&mut buf).await {
+                    let _res = d_tx.write(&buf[..count]).await;
+                }
+            }
+        };
+
+        join(dr, rd)
+    }};
+}
+
+#[embassy_executor::task]
+async fn uart_bridge_task(
+    device1: UartDevice1,
+    routed1: UartRouted1,
+    device2: UartDevice2,
+    routed2: UartRouted2,
+    device3: UartDevice3,
+    routed3: UartRouted3,
+    device4: UartDevice4,
+    routed4: UartRouted4,
+) {
+    let bridge1 = make_uart_bridge!(device1, routed1);
+    let bridge2 = make_uart_bridge!(device2, routed2);
+    let bridge3 = make_uart_bridge!(device3, routed3);
+    let bridge4 = make_uart_bridge!(device4, routed4);
+
+    join4(bridge1, bridge2, bridge3, bridge4).await;
 }
 
 pub enum Event {
@@ -184,7 +241,7 @@ async fn main(spawner: Spawner) {
         config.rcc.mux.rngsel = mux::Rngsel::PLL1_Q;
     }
 
-    let p = embassy_stm32::init(config);
+    let p: embassy_stm32::Peripherals = embassy_stm32::init(config);
 
     // Config TIM3 as a time base for FDCAN timestamps
     let tim3 = p.TIM3;
@@ -475,15 +532,90 @@ async fn main(spawner: Spawner) {
     info!("USB Configured");
 
     // config uarts
-    let mut uart_r3 = Uart::new(p.USART2, p.PA3, p.PD5, Irqs, p.DMA1_CH0, p.DMA1_CH1, usart::Config::default()).unwrap();
-    let mut uart_d2 = Uart::new(p.USART3, p.PB11, p.PB10, Irqs, p.DMA1_CH2, p.DMA1_CH3, usart::Config::default()).unwrap();
-    let mut uart_d4 = Uart::new(p.UART4 , p.PD0, p.PD1, Irqs, p.DMA1_CH4, p.DMA1_CH5, usart::Config::default()).unwrap();
-    let mut uart_r2 = Uart::new(p.UART5, p.PD2, p.PC12, Irqs, p.DMA1_CH6, p.DMA1_CH7, usart::Config::default()).unwrap();
-    let mut uart_r1 = Uart::new(p.USART6, p.PC7, p.PC6, Irqs, p.DMA2_CH0, p.DMA2_CH1, usart::Config::default()).unwrap();
-    let mut uart_d1 = Uart::new(p.UART7, p.PE7, p.PE8, Irqs, p.DMA2_CH2, p.DMA2_CH3, usart::Config::default()).unwrap();
-    let mut uart_d3 = Uart::new(p.UART9, p.PG0, p.PG1, Irqs, p.DMA2_CH4, p.DMA2_CH5, usart::Config::default()).unwrap();
-    let mut uart_r4 = Uart::new(p.USART10, p.PE2, p.PE3, Irqs, p.DMA2_CH6, p.DMA2_CH7, usart::Config::default()).unwrap();
+    let uart_r3 = Uart::new(
+        p.USART2,
+        p.PA3,
+        p.PD5,
+        Irqs,
+        p.DMA1_CH0,
+        p.DMA1_CH1,
+        usart::Config::default(),
+    )
+    .unwrap();
+    let uart_d2 = Uart::new(
+        p.USART3,
+        p.PB11,
+        p.PB10,
+        Irqs,
+        p.DMA1_CH2,
+        p.DMA1_CH3,
+        usart::Config::default(),
+    )
+    .unwrap();
+    let uart_d4 = Uart::new(
+        p.UART4,
+        p.PD0,
+        p.PD1,
+        Irqs,
+        p.DMA1_CH4,
+        p.DMA1_CH5,
+        usart::Config::default(),
+    )
+    .unwrap();
+    let uart_r2 = Uart::new(
+        p.UART5,
+        p.PD2,
+        p.PC12,
+        Irqs,
+        p.DMA1_CH6,
+        p.DMA1_CH7,
+        usart::Config::default(),
+    )
+    .unwrap();
+    let uart_r1 = Uart::new(
+        p.USART6,
+        p.PC7,
+        p.PC6,
+        Irqs,
+        p.DMA2_CH0,
+        p.DMA2_CH1,
+        usart::Config::default(),
+    )
+    .unwrap();
+    let uart_d1 = Uart::new(
+        p.UART7,
+        p.PE7,
+        p.PE8,
+        Irqs,
+        p.DMA2_CH2,
+        p.DMA2_CH3,
+        usart::Config::default(),
+    )
+    .unwrap();
+    let uart_d3 = Uart::new(
+        p.UART9,
+        p.PG0,
+        p.PG1,
+        Irqs,
+        p.DMA2_CH4,
+        p.DMA2_CH5,
+        usart::Config::default(),
+    )
+    .unwrap();
+    let uart_r4 = Uart::new(
+        p.USART10,
+        p.PE2,
+        p.PE3,
+        Irqs,
+        p.DMA2_CH6,
+        p.DMA2_CH7,
+        usart::Config::default(),
+    )
+    .unwrap();
 
+    unwrap!(spawner.spawn(uart_bridge_task(
+        uart_d1, uart_r1, uart_d2, uart_r2, uart_d3, uart_r3, uart_d4, uart_r4
+    )));
 
     info!("UARTs Configured");
 
