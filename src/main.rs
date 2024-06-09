@@ -143,7 +143,7 @@ pub enum Event {
     /// Frame, Timestamp, Channel
     CanRx(embassy_stm32::can::frame::FdFrame, Instant, u8),
     /// echo_id, Timestamp, Channel
-    CanTx(u8, Instant, u8),
+    CanTxEvent(u8, Instant, u8),
     /// Frame
     UsbCanRx(HostFrame),
     /// CAN bus error
@@ -202,7 +202,7 @@ fn create_can_tx_event_stream<I: Instance>(
     unfold((can, can_channel), |(mut rx, can_channel)| async move {
         let (_header, marker, timestamp) = rx.read_tx_event().await;
         Some((
-            Event::CanTx(marker, timestamp, can_channel),
+            Event::CanTxEvent(marker, timestamp, can_channel),
             (rx, can_channel),
         ))
     })
@@ -276,7 +276,8 @@ async fn main(spawner: Spawner) {
     can0.set_bitrate(500_000);
     can0.set_fd_data_bitrate(1_000_000, true);
     can0.set_tx_mode(can::config::TxBufferMode::Fifo);
-    let can0 = can0.into_normal_mode();
+    // let can0 = can0.into_normal_mode();
+    let can0 = can0.into_internal_loopback_mode();
     let (mut can_tx_0, can_rx_0, can_tx_event_0, can_cnt_0) = can0.split_with_control();
 
     debug!(
@@ -292,14 +293,16 @@ async fn main(spawner: Spawner) {
     can1.set_bitrate(500_000);
     can1.set_fd_data_bitrate(1_000_000, true);
     can1.set_tx_mode(can::config::TxBufferMode::Fifo);
-    let can1 = can1.into_normal_mode();
+    // let can1 = can1.into_normal_mode();
+    let can1 = can1.into_internal_loopback_mode();
     let (mut can_tx_1, can_rx_1, can_tx_event_1, can_cnt_1) = can1.split_with_control();
 
     let mut can2 = can::FdcanConfigurator::new(p.FDCAN3, p.PF6, p.PF7, Irqs);
     can2.set_bitrate(500_000);
     can2.set_fd_data_bitrate(1_000_000, true);
     can2.set_tx_mode(can::config::TxBufferMode::Fifo);
-    let can2 = can2.into_normal_mode();
+    // let can2 = can2.into_normal_mode();
+    let can2 = can2.into_internal_loopback_mode();
     let (mut can_tx_2, can_rx_2, can_tx_event_2, can_cnt_2) = can2.split_with_control();
 
     let can_rx_stream_0 = create_can_rx_stream(can_rx_0, 0);
@@ -364,7 +367,8 @@ async fn main(spawner: Spawner) {
 
     // let config = embassy_net::Config::dhcpv4(Default::default());
 
-    let ip_address = Ipv4Address::new(192, 168, 250, 61);
+    // let ip_address = Ipv4Address::new(192, 168, 250, 61);
+    let ip_address = Ipv4Address::new(192, 168, 16, 65);
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
         address: Ipv4Cidr::new(ip_address, 24),
         dns_servers: heapless::Vec::new(),
@@ -398,18 +402,30 @@ async fn main(spawner: Spawner) {
         &mut tx_buffer,
     );
 
-    udp_socket.bind(0).unwrap();
+    // udp_socket
+    //     .bind(0)
+    //     .unwrap();
+
+    // udp_socket
+    //     .bind((Ipv4Address::new(239, 74, 163, 2), 43113))
+    //     .unwrap();
+
+    udp_socket.bind(43113).unwrap();
 
     let eth_rx = pin!(stream::unfold(
         (&udp_socket, [0u8; 256]),
         |(udp_socket, mut buffer)| async move {
             loop {
-                match udp_socket.recv_from(&mut buffer).await {
+                let received_frame = udp_socket.recv_from(&mut buffer).await;
+                info!("Received ETH frame");
+
+                match received_frame {
                     Ok((size, _)) => match gs_can::msgpack_info_fdframe(&buffer[..size]) {
                         Ok((fd_frame, channel)) => {
                             return Some((Event::EthCanRx(fd_frame, channel), (udp_socket, buffer)))
                         }
-                        Err(_err) => warn!("Could not parse msg_pack CAN message"),
+                        Err(err) => warn!("Could not parse msg_pack CAN message {:?}", err),
+                        // Err(err) => warn!("Could not parse msg_pack CAN message"),
                     },
                     Err(error) => warn!("Invalid udp message {:?}", error),
                 }
@@ -656,7 +672,7 @@ async fn main(spawner: Spawner) {
                         let _ = green_led_channel.try_send(());
                     }
                 }
-                Event::CanTx(echo_id, ts, channel) => {
+                Event::CanTxEvent(echo_id, ts, channel) => {
                     debug!(
                         "CanTx | CAN Frame Transmitted. Channel: {}, Timestamp: {}, Echo ID {}",
                         channel,
@@ -718,6 +734,9 @@ async fn main(spawner: Spawner) {
                     let _ = red_led_channel.try_send(());
                 }
                 Event::EthCanRx(frame, channel) => {
+                    debug!("Sending CAN frame from ETH: CAN {}",channel );
+                    let _ = yellow_led_channel.try_send(());
+
                     can_tx_channel.send((frame, channel, None)).await;
                 }
             }

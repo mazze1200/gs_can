@@ -7,7 +7,7 @@ use core::num::{NonZeroU16, NonZeroU8};
 use core::ops::BitOrAssign;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use defmt::{debug, info, warn};
+use defmt::{debug, info, warn, Format};
 use embassy_stm32::can::enums::FrameCreateError;
 use embassy_stm32::can::{
     config::{DataBitTiming, NominalBitTiming},
@@ -410,8 +410,8 @@ impl From<u8> for GsHostFrameFlags {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Format)]
+// #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DlcError {
     DlcOver15,
     LenOver64,
@@ -627,8 +627,8 @@ pub enum HostFrame {
     FdTs(GsHostFrameFdTs),
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Format)]
+// #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MsgpackUnpackError {
     MsgPackError(errors::Error),
     MissingId,
@@ -641,27 +641,48 @@ pub enum MsgpackUnpackError {
     FrameCreateError(FrameCreateError),
 }
 
+// impl defmt::Format for MsgpackUnpackError {
+//     fn format(&self, f: defmt::Formatter) {
+//         match self {
+//             MsgpackUnpackError::MsgPackError(err) =>  defmt::write!(f, "MsgPackError({})",err),
+//             MsgpackUnpackError::MissingId =>  defmt::write!(f, "MissingId"),
+//             MsgpackUnpackError::InvalidId =>  defmt::write!(f, "InvalidId"),
+//             MsgpackUnpackError::MissingExtended =>  defmt::write!(f, "MissingExtended"),
+//             MsgpackUnpackError::MissingData =>  defmt::write!(f, "MissingData"),
+//             MsgpackUnpackError::MissingChannel =>  defmt::write!(f, "MissingChannel"),
+//             MsgpackUnpackError::MissingDlc =>  defmt::write!(f, "MissingDlc"),
+//             MsgpackUnpackError::InvalidDlc(err) => defmt::write!(f, "InvalidDlc({})", err),
+//             MsgpackUnpackError::FrameCreateError(err) =>  defmt::write!(f, "FrameCreateError({})", err),
+//         }
+
+//     }
+// }
+
 impl From<FrameCreateError> for MsgpackUnpackError {
     fn from(value: FrameCreateError) -> Self {
         MsgpackUnpackError::FrameCreateError(value)
+        // MsgpackUnpackError::FrameCreateError
     }
 }
 
 impl From<errors::Error> for MsgpackUnpackError {
     fn from(value: errors::Error) -> Self {
         MsgpackUnpackError::MsgPackError(value)
+        // MsgpackUnpackError::MsgPackError
     }
 }
 
 impl From<(core::str::Utf8Error, &[u8])> for MsgpackUnpackError {
     fn from(value: (core::str::Utf8Error, &[u8])) -> Self {
         MsgpackUnpackError::MsgPackError(value.into())
+        // MsgpackUnpackError::MsgPackError
     }
 }
 
 impl From<DlcError> for MsgpackUnpackError {
     fn from(value: DlcError) -> Self {
         MsgpackUnpackError::InvalidDlc(value)
+        // MsgpackUnpackError::InvalidDlc
     }
 }
 
@@ -669,6 +690,7 @@ impl<E: RmpWriteErr> From<ValueWriteError<E>> for MsgpackUnpackError {
     fn from(value: ValueWriteError<E>) -> Self {
         let error: errors::Error = value.into();
         MsgpackUnpackError::MsgPackError(error)
+        // MsgpackUnpackError::MsgPackError
     }
 }
 
@@ -975,13 +997,15 @@ pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<(FdFrame, u8), MsgpackUnpac
                         _ => {
                             return Err(MsgpackUnpackError::MsgPackError(
                                 rmp::errors::Error::InvalidMarker,
-                            ))
+                            ));
+                            // return Err(MsgpackUnpackError::MsgPackError)
                         }
                     },
                     Err(_err) => {
                         return Err(MsgpackUnpackError::MsgPackError(
                             rmp::errors::Error::ValueReadError,
-                        ))
+                        ));
+                        // return Err(MsgpackUnpackError::MsgPackError)
                     }
                 }
             }
@@ -989,12 +1013,22 @@ pub fn msgpack_info_fdframe(buffer: &[u8]) -> Result<(FdFrame, u8), MsgpackUnpac
     }
 
     let id = match is_extended_id? {
-        true => embedded_can::Id::Extended(
-            ExtendedId::new(arbitration_id? as u32).unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
-        ),
-        false => embedded_can::Id::Standard(
-            StandardId::new(arbitration_id? as u16).unwrap_or(Err(MsgpackUnpackError::InvalidId)?),
-        ),
+        true => {
+            let extended_id = ExtendedId::new(arbitration_id? as u32);
+            if let Some(extended_id) = extended_id {
+                embedded_can::Id::Extended(extended_id)
+            } else {
+                return Err(MsgpackUnpackError::InvalidId);
+            }
+        }
+        false => {
+            let standard_id = StandardId::new(arbitration_id? as u16);
+            if let Some(standard_id) = standard_id {
+                embedded_can::Id::Standard(standard_id)
+            } else {
+                return Err(MsgpackUnpackError::InvalidId);
+            }
+        }
     };
 
     let header = match is_fd {
