@@ -23,7 +23,7 @@
                     "rttEnabled": true,
                     "options": {
                         "env": {
-                            "DEFMT_LOG": "Trace" // Trace, Debug, Info, Warn, Error
+                            "DEFMT_LOG": "Debug" // Trace, Debug, Info, Warn, Error
                         }
                     },
                 },
@@ -33,7 +33,45 @@
             //     // If you set this variable, check the VSCode console log window for the location of the log file.
             //     "RUST_LOG": "info"
             //   },
-            "consoleLogLevel": "Info"
+            "consoleLogLevel": "Info",
+            "env": {
+                //!MODIFY: Remove or use any of the supported DEFMT_LOG options.
+                "DEFMT_LOG": "info"
+            }
+        },
+        {
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "probe-rs gs_can run",
+            "cwd": "${workspaceFolder}",
+            "connectUnderReset": true,
+            "chip": "STM32H723ZGTx",
+            "flashingConfig": {
+                "flashingEnabled": false,
+                "haltAfterReset": false
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/gs_can",
+                    "rttEnabled": true,
+                    "options": {
+                        "env": {
+                            "DEFMT_LOG": "Debug" // Trace, Debug, Info, Warn, Error
+                        }
+                    },
+                },
+            ],
+            // "env": {
+            //     //!MODIFY (or remove)
+            //     // If you set this variable, check the VSCode console log window for the location of the log file.
+            //     "RUST_LOG": "info"
+            //   },
+            "consoleLogLevel": "Info",
+            "env": {
+                //!MODIFY: Remove or use any of the supported DEFMT_LOG options.
+                "DEFMT_LOG": "info"
+            }
         },
         {
             "preLaunchTask": "cargo build example",
