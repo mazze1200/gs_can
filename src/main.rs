@@ -14,7 +14,6 @@ use embassy_stm32::can::frame::FdFrame;
 use embassy_stm32::can::{FdCanConfiguration, FdcanRx, FdcanTxEvent, Instance};
 use embassy_stm32::eth::generic_smi::GenericSMI;
 use embassy_stm32::eth::{Ethernet, PacketQueue};
-use embassy_stm32::flash::Async;
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::FDCAN1;
 use embassy_stm32::rcc::low_level::RccPeripheral;
@@ -22,7 +21,7 @@ use embassy_stm32::rng::{self, Rng};
 use embassy_stm32::timer::low_level::CoreInstance;
 use embassy_stm32::usart::{self, Uart};
 use embassy_stm32::usb_otg::Driver;
-use embassy_stm32::{bind_interrupts, eth, peripherals, usb_otg, Config, Peripherals};
+use embassy_stm32::{bind_interrupts, eth, peripherals, usb_otg, Config};
 use embassy_time::{Instant, Timer};
 
 use embassy_stm32::can;
@@ -146,12 +145,12 @@ pub enum Event {
     /// echo_id, Timestamp, Channel
     CanTx(u8, Instant, u8),
     /// Frame
-    UsbRx(HostFrame),
+    UsbCanRx(HostFrame),
     /// CAN bus error
     /// Channel index
     CanErr(u8),
     /// CAN frame received over ethernet to be send on channel
-    EthRx(embassy_stm32::can::frame::FdFrame, u8),
+    EthCanRx(embassy_stm32::can::frame::FdFrame, u8),
 }
 
 fn create_can_rx_stream<'d, I: Instance>(
@@ -401,8 +400,6 @@ async fn main(spawner: Spawner) {
 
     udp_socket.bind(0).unwrap();
 
-    let remote_udp_address = (Ipv4Address::new(239, 74, 163, 2), 43113);
-
     let eth_rx = pin!(stream::unfold(
         (&udp_socket, [0u8; 256]),
         |(udp_socket, mut buffer)| async move {
@@ -410,7 +407,7 @@ async fn main(spawner: Spawner) {
                 match udp_socket.recv_from(&mut buffer).await {
                     Ok((size, _)) => match gs_can::msgpack_info_fdframe(&buffer[..size]) {
                         Ok((fd_frame, channel)) => {
-                            return Some((Event::EthRx(fd_frame, channel), (udp_socket, buffer)))
+                            return Some((Event::EthCanRx(fd_frame, channel), (udp_socket, buffer)))
                         }
                         Err(_err) => warn!("Could not parse msg_pack CAN message"),
                     },
@@ -485,13 +482,14 @@ async fn main(spawner: Spawner) {
         let frame = usb_rx.read_frame().await;
         debug!("Read Frame from USB");
         match frame {
-            Ok(frame) => return Some((Event::UsbRx(frame), usb_rx)),
+            Ok(frame) => return Some((Event::UsbCanRx(frame), usb_rx)),
             Err(error) => warn!("Invalid Frame: Error {:?}", error),
         };
 
         None
     }));
 
+    let udp_can_multicast_address: (Ipv4Address, u16) = (Ipv4Address::new(239, 74, 163, 2), 43113);
     let tx_udp_socket = &udp_socket;
     let usb_eth_tx_channel = Channel::<NoopRawMutex, HostFrame, 6>::new();
     let usb_eth_tx_fut = async {
@@ -507,7 +505,7 @@ async fn main(spawner: Spawner) {
 
                 let (usb_tx_res, eth_tx_res) = join(
                     usb_tx.write_frame(&frame),
-                    tx_udp_socket.send_to(&udp_buffer[..udp_frame_size], remote_udp_address),
+                    tx_udp_socket.send_to(&udp_buffer[..udp_frame_size], udp_can_multicast_address),
                 )
                 .await;
 
@@ -519,8 +517,9 @@ async fn main(spawner: Spawner) {
                     warn!("Add ETH error handling!");
                 }
             } else {
+                // USB is not connected so we only send to ETH
                 if let Err(_) = tx_udp_socket
-                    .send_to(&udp_buffer[..udp_frame_size], remote_udp_address)
+                    .send_to(&udp_buffer[..udp_frame_size], udp_can_multicast_address)
                     .await
                 {
                     warn!("Add ETH error handling!");
@@ -638,7 +637,7 @@ async fn main(spawner: Spawner) {
     let yellow_led_channel = Channel::<NoopRawMutex, (), 1>::new();
     let red_led_channel = Channel::<NoopRawMutex, (), 1>::new();
 
-    let main_handler = async {
+    let can_handler = async {
         while let Some(event) = selectors.next().await {
             match event {
                 Event::CanRx(frame, ts, channel) => {
@@ -684,7 +683,7 @@ async fn main(spawner: Spawner) {
 
                     warn!("Add error handling!");
                 }
-                Event::UsbRx(frame) => {
+                Event::UsbCanRx(frame) => {
                     let can_frame: Result<FdFrame, _> = (&frame).into();
 
                     if let Ok(can_frame) = can_frame {
@@ -692,7 +691,7 @@ async fn main(spawner: Spawner) {
                         let echo_id = frame.get_echo_id() as usize;
 
                         debug!(
-                            "UsbRx | Host Frame received. Channel: {}, Echo ID: {}",
+                            "UsbCanRx | Host Frame received. Channel: {}, Echo ID: {}",
                             channel, echo_id
                         );
 
@@ -702,11 +701,11 @@ async fn main(spawner: Spawner) {
                                     channel_host_frames[echo_id] = Some(frame);
                                 } else {
                                     warn!(
-                                        "UsbRx | Echo ID already in buffer. That should not happen"
+                                        "UsbCanRx | Echo ID already in buffer. That should not happen"
                                     );
                                 }
                             } else {
-                                warn!("UsbRx | Echo ID out of bounds!");
+                                warn!("UsbCanRx | Echo ID out of bounds!");
                             }
                         }
 
@@ -718,7 +717,7 @@ async fn main(spawner: Spawner) {
                 Event::CanErr(_channel) => {
                     let _ = red_led_channel.try_send(());
                 }
-                Event::EthRx(frame, channel) => {
+                Event::EthCanRx(frame, channel) => {
                     can_tx_channel.send((frame, channel, None)).await;
                 }
             }
@@ -775,7 +774,7 @@ async fn main(spawner: Spawner) {
     info!("Start handlers");
     join4(
         join3(green_led_fut, yellow_led_fut, red_led_fut),
-        main_handler,
+        can_handler,
         can_tx_fut,
         usb_eth_tx_fut,
     )
