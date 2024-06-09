@@ -27,7 +27,17 @@ sudo cansniffer -c -f 1 can0
 
 # Sniff ETH
 ```code
-sudo tcpdump -i lan host 224.4.4.4 and port 4444
+sudo tcpdump -i lan host 239.74.163.2 and port 43113
+```
+
+# Send ETH frame
+```code
+cat single_eth_frame.bin | ncat -vu "192.168.16.65" 43113
+```
+
+# Trace ETH 
+```code
+socat UDP4-RECVFROM:43113,ip-add-membership=239.74.163.2:0.0.0.0,fork - |xxd
 ```
 
 # Reset the chip

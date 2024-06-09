@@ -25,11 +25,11 @@ def joinMcast(mcast_addr,port,if_ip):
     return mcastsock
 
 
-MCAST_GRP = '224.4.4.4'
-MCAST_PORT = 4444
+MCAST_GRP = '239.74.163.2'
+MCAST_PORT = 43113
 IS_ALL_GROUPS = False
 
 
-sock = joinMcast(MCAST_GRP, MCAST_PORT, '192.168.16.1')
+sock = joinMcast(MCAST_GRP, MCAST_PORT, '192.168.16.32')
 while True:
   print(sock.recv(10240))
