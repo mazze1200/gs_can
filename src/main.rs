@@ -120,7 +120,7 @@ macro_rules! make_uart_bridge {
         };
 
         let rd = async move {
-            let reouted_data = pin!(stream::unfold(
+            let routed_data = pin!(stream::unfold(
                 (free_buffer_receiver, r_rx),
                 |(free_buffer_receiver, mut r_rx)| async move {
                     let buf = free_buffer_receiver.receive().await;
@@ -140,7 +140,7 @@ macro_rules! make_uart_bridge {
                 }
             ));
 
-            let mut selector = select(reouted_data, eth_data);
+            let mut selector = select(routed_data, eth_data);
             loop {
                 while let Some((buf, count)) = selector.next().await {
                     let _res = d_tx.write(&buf[..count]).await;
@@ -154,55 +154,71 @@ macro_rules! make_uart_bridge {
 }
 
 #[embassy_executor::task]
-async fn uart_bridge_task(
-    device1: UartDevice1,
-    routed1: UartRouted1,
-    data_1_receive_channel: &'static UartDataBuffer,
-    data_1_send_channel: &'static UartDataBuffer,
-    device2: UartDevice2,
-    routed2: UartRouted2,
-    data_2_receive_channel: &'static UartDataBuffer,
-    data_2_send_channel: &'static UartDataBuffer,
-    device3: UartDevice3,
-    routed3: UartRouted3,
-    data_3_receive_channel: &'static UartDataBuffer,
-    data_3_send_channel: &'static UartDataBuffer,
-    device4: UartDevice4,
-    routed4: UartRouted4,
-    data_4_receive_channel: &'static UartDataBuffer,
-    data_4_send_channel: &'static UartDataBuffer,
+async fn uart_bridge_1_task(
+    device: UartDevice1,
+    routed: UartRouted1,
+    receive_channel: &'static UartDataBuffer,
+    send_channel: &'static UartDataBuffer,
     free_buffer: &'static UartFreeBuffer,
 ) {
-    let bridge1 = make_uart_bridge!(
-        device1,
-        routed1,
-        data_1_receive_channel,
-        data_1_send_channel,
+    let res = make_uart_bridge!(
+        device,
+        routed,
+        receive_channel,
+        send_channel,
         free_buffer
-    );
-    let bridge2 = make_uart_bridge!(
-        device2,
-        routed2,
-        data_2_receive_channel,
-        data_2_send_channel,
-        free_buffer
-    );
-    let bridge3 = make_uart_bridge!(
-        device3,
-        routed3,
-        data_3_receive_channel,
-        data_3_send_channel,
-        free_buffer
-    );
-    let bridge4 = make_uart_bridge!(
-        device4,
-        routed4,
-        data_4_receive_channel,
-        data_4_send_channel,
-        free_buffer
-    );
+    ).await;
+}
 
-    join4(bridge1, bridge2, bridge3, bridge4).await;
+#[embassy_executor::task]
+async fn uart_bridge_2_task(
+    device: UartDevice2,
+    routed: UartRouted2,
+    receive_channel: &'static UartDataBuffer,
+    send_channel: &'static UartDataBuffer,
+    free_buffer: &'static UartFreeBuffer,
+) {
+    let res = make_uart_bridge!(
+        device,
+        routed,
+        receive_channel,
+        send_channel,
+        free_buffer
+    ).await;
+}
+
+#[embassy_executor::task]
+async fn uart_bridge_3_task(
+    device: UartDevice3,
+    routed: UartRouted3,
+    receive_channel: &'static UartDataBuffer,
+    send_channel: &'static UartDataBuffer,
+    free_buffer: &'static UartFreeBuffer,
+) {
+    let res = make_uart_bridge!(
+        device,
+        routed,
+        receive_channel,
+        send_channel,
+        free_buffer
+    ).await;
+}
+
+#[embassy_executor::task]
+async fn uart_bridge_4_task(
+    device: UartDevice4,
+    routed: UartRouted4,
+    receive_channel: &'static UartDataBuffer,
+    send_channel: &'static UartDataBuffer,
+    free_buffer: &'static UartFreeBuffer,
+) {
+    let res = make_uart_bridge!(
+        device,
+        routed,
+        receive_channel,
+        send_channel,
+        free_buffer
+    ).await;
 }
 
 pub enum Event {
@@ -468,14 +484,6 @@ async fn main(spawner: Spawner) {
         &mut tx_buffer,
     );
 
-    // udp_socket
-    //     .bind(0)
-    //     .unwrap();
-
-    // udp_socket
-    //     .bind((Ipv4Address::new(239, 74, 163, 2), 43113))
-    //     .unwrap();
-
     udp_socket.bind(43113).unwrap();
 
     let eth_rx = pin!(stream::unfold(
@@ -491,7 +499,6 @@ async fn main(spawner: Spawner) {
                             return Some((Event::EthCanRx(fd_frame, channel), (udp_socket, buffer)))
                         }
                         Err(err) => warn!("Could not parse msg_pack CAN message {:?}", err),
-                        // Err(err) => warn!("Could not parse msg_pack CAN message"),
                     },
                     Err(error) => warn!("Invalid udp message {:?}", error),
                 }
@@ -499,7 +506,7 @@ async fn main(spawner: Spawner) {
         }
     ));
 
-    info!("Ethernet configured");
+    info!("CAN Ethernet configured");
 
     // Create the driver, from the HAL.
     static EP_OUT_BUFFER: StaticCell<[u8; 256]> = StaticCell::new();
@@ -578,7 +585,6 @@ async fn main(spawner: Spawner) {
         let mut udp_buffer = [0u8; 256];
         loop {
             let frame = usb_eth_tx_channel.receive().await;
-            // let frame_ref = (&frame).into();
 
             let udp_frame_size = frame.into_msgpack(&mut udp_buffer[..]).unwrap();
 
@@ -694,7 +700,6 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
-    // let uart1_rx_channel = Channel::new();
     static BUFFERS: StaticCell<[[u8; UART_BUFFER_SIZE]; UART_BUFFER_COUNT]> = StaticCell::new();
     let buffers = BUFFERS.init(array_init::array_init(|_| [0u8; UART_BUFFER_SIZE]));
 
@@ -704,6 +709,10 @@ async fn main(spawner: Spawner) {
         &mut [u8; UART_BUFFER_SIZE],
         UART_BUFFER_COUNT,
     >::new());
+
+    for buffer in buffers {
+        free_buffers.send(buffer).await;
+    }
 
     static DATA_1_RECEIVE_CHANNEL: StaticCell<UartDataBuffer> = StaticCell::new();
     let data_1_receive_channel = DATA_1_RECEIVE_CHANNEL.init(Channel::<
@@ -761,34 +770,64 @@ async fn main(spawner: Spawner) {
         UART_BUFFER_COUNT,
     >::new());
 
-    // let data_1 =
-    //     Channel::<NoopRawMutex, (&mut [u8; UART_BUFFER_SIZE], usize), UART_BUFFER_COUNT>::new();
-    // let data_2 =
-    //     Channel::<NoopRawMutex, (&mut [u8; UART_BUFFER_SIZE], usize), UART_BUFFER_COUNT>::new();
-    // let data_3 =
-    //     Channel::<NoopRawMutex, (&mut [u8; UART_BUFFER_SIZE], usize), UART_BUFFER_COUNT>::new();
-    // let data_4 =
-    //     Channel::<NoopRawMutex, (&mut [u8; UART_BUFFER_SIZE], usize), UART_BUFFER_COUNT>::new();
-
-    unwrap!(spawner.spawn(uart_bridge_task(
+    unwrap!(spawner.spawn(uart_bridge_1_task(
         uart_d1,
         uart_r1,
         data_1_receive_channel,
         data_1_send_channel,
+        free_buffers
+    )));
+
+    unwrap!(spawner.spawn(uart_bridge_2_task(
         uart_d2,
         uart_r2,
         data_2_receive_channel,
         data_2_send_channel,
+        free_buffers
+    )));
+
+    unwrap!(spawner.spawn(uart_bridge_3_task(
         uart_d3,
         uart_r3,
         data_3_receive_channel,
         data_3_send_channel,
+        free_buffers
+    )));
+
+    unwrap!(spawner.spawn(uart_bridge_4_task(
         uart_d4,
         uart_r4,
         data_4_receive_channel,
         data_4_send_channel,
         free_buffers
     )));
+
+    macro_rules! make_uart_udp_socket {
+        ( $data:ident, $socket:ident, $port:expr ) => {
+            let mut $data = (
+                [PacketMetadata::EMPTY; 16],
+                [0; 1024],
+                [PacketMetadata::EMPTY; 16],
+                [0; 1024],
+            );
+
+            let mut $socket = UdpSocket::new(
+                stack,
+                &mut $data.0,
+                &mut $data.1,
+                &mut $data.2,
+                &mut $data.3,
+            );
+
+            $socket.bind($port).unwrap();
+
+        };
+    }
+
+    make_uart_udp_socket!(_uart_1_data, uart_1_socket, 43114);
+    make_uart_udp_socket!(_uart_2_data, uart_2_socket, 43115);
+    make_uart_udp_socket!(_uart_3_data, uart_3_socket, 43116);
+    make_uart_udp_socket!(_uart_4_data, uart_4_socket, 43117);
 
     info!("UARTs Configured");
 
