@@ -103,7 +103,7 @@ async fn usb_task(mut device: UsbDevice<'static, UsbDriver>) -> ! {
 }
 
 macro_rules! make_uart_bridge {
-    (  $device:ident, $routed:ident, $data_receive_channel:ident, $data_send_channel:ident, $free_buffer:ident,  $socket:ident ) => {{
+    (  $device:ident, $routed:ident, $data_receive_channel:ident, $data_send_channel:ident, $free_buffer:ident, $socket:ident, $port:ident ) => {{
         let (mut d_tx, mut d_rx) = $device.split();
         let (mut r_tx, r_rx) = $routed.split();
         let free_buffer_receiver = $free_buffer.receiver();
@@ -112,15 +112,17 @@ macro_rules! make_uart_bridge {
         let data_send_receiver = $data_send_channel.receiver();
 
         let dr = async move {
-            let remote_endpoint = (Ipv4Address::new(239, 74, 163, 2), 43113);
+            let remote_endpoint = (Ipv4Address::new(239, 74, 163, 2), $port);
 
             loop {
                 let buf = free_buffer_receiver.receive().await;
 
                 if let Ok(count) = d_rx.read_until_idle(buf).await {
-                    let _res = r_tx.write(&buf[..count]).await;
-                    // data_receive_sender.send((buf, count)).await;
-                    let _res = $socket.send_to(&buf[..count], remote_endpoint).await;
+                    if count > 0 {
+                        let _res = r_tx.write(&buf[..count]).await;
+                        // data_receive_sender.send((buf, count)).await;
+                        let _res = $socket.send_to(&buf[..count], remote_endpoint).await;
+                    }
                 }
             }
         };
@@ -132,7 +134,9 @@ macro_rules! make_uart_bridge {
                     let buf = free_buffer_receiver.receive().await;
                     loop {
                         if let Ok(count) = r_rx.read_until_idle(buf).await {
-                            return Some(((buf, count), (free_buffer_receiver, r_rx)));
+                            if count > 0 {
+                                return Some(((buf, count), (free_buffer_receiver, r_rx)));
+                            }
                         }
                     }
                 }
@@ -200,6 +204,7 @@ async fn uart_bridge_1_task(
     send_channel: &'static UartDataBuffer,
     free_buffer: &'static UartFreeBuffer,
     socket: &'static UdpSocket<'static>,
+    port: u16,
 ) {
     let bridge = make_uart_bridge!(
         device,
@@ -207,7 +212,8 @@ async fn uart_bridge_1_task(
         receive_channel,
         send_channel,
         free_buffer,
-        socket
+        socket,
+        port
     );
 
     bridge.await;
@@ -221,6 +227,7 @@ async fn uart_bridge_2_task(
     send_channel: &'static UartDataBuffer,
     free_buffer: &'static UartFreeBuffer,
     socket: &'static UdpSocket<'static>,
+    port: u16,
 ) {
     let bridge = make_uart_bridge!(
         device,
@@ -228,7 +235,8 @@ async fn uart_bridge_2_task(
         receive_channel,
         send_channel,
         free_buffer,
-        socket
+        socket,
+        port
     );
 
     bridge.await;
@@ -242,6 +250,7 @@ async fn uart_bridge_3_task(
     send_channel: &'static UartDataBuffer,
     free_buffer: &'static UartFreeBuffer,
     socket: &'static UdpSocket<'static>,
+    port: u16,
 ) {
     let bridge = make_uart_bridge!(
         device,
@@ -249,7 +258,8 @@ async fn uart_bridge_3_task(
         receive_channel,
         send_channel,
         free_buffer,
-        socket
+        socket,
+        port
     );
 
     bridge.await;
@@ -263,6 +273,7 @@ async fn uart_bridge_4_task(
     send_channel: &'static UartDataBuffer,
     free_buffer: &'static UartFreeBuffer,
     socket: &'static UdpSocket<'static>,
+    port: u16,
 ) {
     let bridge = make_uart_bridge!(
         device,
@@ -270,7 +281,8 @@ async fn uart_bridge_4_task(
         receive_channel,
         send_channel,
         free_buffer,
-        socket
+        socket,
+        port
     );
 
     bridge.await;
@@ -514,11 +526,11 @@ async fn main(spawner: Spawner) {
 
     // Init network stack
     static STACK: StaticCell<Stack<EthernetDevice>> = StaticCell::new();
-    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    static RESOURCES: StaticCell<StackResources<10>> = StaticCell::new();
     let stack = &*STACK.init(Stack::new(
         device,
         config,
-        RESOURCES.init(StackResources::<3>::new()),
+        RESOURCES.init(StackResources::<10>::new()),
         seed,
     ));
 
@@ -793,8 +805,8 @@ async fn main(spawner: Spawner) {
 
     // let b = PacketMetadata::EMPTY;
 
-    static b: StaticCell<[PacketMetadata; 16]> = StaticCell::new();
-    let c = b.init([PacketMetadata::EMPTY; 16]);
+    // static b: StaticCell<[PacketMetadata; 16]> = StaticCell::new();
+    // let c = b.init([PacketMetadata::EMPTY; 16]);
 
     macro_rules! make_uart_udp_socket {
         (  $socket:ident, $port:expr ) => {
@@ -826,9 +838,9 @@ async fn main(spawner: Spawner) {
     }
 
     make_uart_udp_socket!(uart_1_socket, 43114);
-    make_uart_udp_socket!(uart_2_socket, 43115);
-    make_uart_udp_socket!(uart_3_socket, 43116);
-    make_uart_udp_socket!(uart_4_socket, 43117);
+    // make_uart_udp_socket!(uart_2_socket, 43115);
+    // make_uart_udp_socket!(uart_3_socket, 43116);
+    // make_uart_udp_socket!(uart_4_socket, 43117);
 
     unwrap!(spawner.spawn(uart_bridge_1_task(
         uart_d1,
@@ -836,35 +848,39 @@ async fn main(spawner: Spawner) {
         data_1_receive_channel,
         data_1_send_channel,
         free_buffers,
-        uart_1_socket
+        uart_1_socket,
+        43114
     )));
 
-    unwrap!(spawner.spawn(uart_bridge_2_task(
-        uart_d2,
-        uart_r2,
-        data_2_receive_channel,
-        data_2_send_channel,
-        free_buffers,
-        uart_2_socket
-    )));
+    // unwrap!(spawner.spawn(uart_bridge_2_task(
+    //     uart_d2,
+    //     uart_r2,
+    //     data_2_receive_channel,
+    //     data_2_send_channel,
+    //     free_buffers,
+    //     uart_2_socket,
+    //     43115
+    // )));
 
-    unwrap!(spawner.spawn(uart_bridge_3_task(
-        uart_d3,
-        uart_r3,
-        data_3_receive_channel,
-        data_3_send_channel,
-        free_buffers,
-        uart_3_socket
-    )));
+    // unwrap!(spawner.spawn(uart_bridge_3_task(
+    //     uart_d3,
+    //     uart_r3,
+    //     data_3_receive_channel,
+    //     data_3_send_channel,
+    //     free_buffers,
+    //     uart_3_socket,
+    //     43116
+    // )));
 
-    unwrap!(spawner.spawn(uart_bridge_4_task(
-        uart_d4,
-        uart_r4,
-        data_4_receive_channel,
-        data_4_send_channel,
-        free_buffers,
-        uart_4_socket
-    )));
+    // unwrap!(spawner.spawn(uart_bridge_4_task(
+    //     uart_d4,
+    //     uart_r4,
+    //     data_4_receive_channel,
+    //     data_4_send_channel,
+    //     free_buffers,
+    //     uart_4_socket,
+    //     43117
+    // )));
 
     info!("UARTs Configured");
 
