@@ -804,25 +804,20 @@ async fn main(spawner: Spawner) {
     make_uart_channel!(data_4_receive_channel);
     make_uart_channel!(data_4_send_channel);
 
-    // let b = PacketMetadata::EMPTY;
-
-    // static b: StaticCell<[PacketMetadata; 16]> = StaticCell::new();
-    // let c = b.init([PacketMetadata::EMPTY; 16]);
-
     macro_rules! make_uart_udp_socket {
         (  $socket:ident, $port:expr ) => {
             paste! {
-                static [<$socket:upper _RX_META>]: StaticCell<[PacketMetadata; 16]> = StaticCell::new();
-                let [<$socket _rx_meta>] =  [<$socket:upper _RX_META>].init([PacketMetadata::EMPTY; 16]);
+                static [<$socket:upper _RX_META>]: StaticCell<[PacketMetadata; 4]> = StaticCell::new();
+                let [<$socket _rx_meta>] =  [<$socket:upper _RX_META>].init([PacketMetadata::EMPTY; 4]);
 
-                static [<$socket:upper _RX_BUFFER>]: StaticCell<[u8; 1024]> = StaticCell::new();
-                let  [<$socket _rx_buffer>] =  [<$socket:upper _RX_BUFFER>].init( [0; 1024]);
+                static [<$socket:upper _RX_BUFFER>]: StaticCell<[u8; 512]> = StaticCell::new();
+                let  [<$socket _rx_buffer>] =  [<$socket:upper _RX_BUFFER>].init( [0; 512]);
 
-                static [<$socket:upper _TX_META>]: StaticCell<[PacketMetadata; 16]> = StaticCell::new();
-                let [<$socket _tx_meta>] =  [<$socket:upper _TX_META>].init([PacketMetadata::EMPTY; 16]);
+                static [<$socket:upper _TX_META>]: StaticCell<[PacketMetadata; 4]> = StaticCell::new();
+                let [<$socket _tx_meta>] =  [<$socket:upper _TX_META>].init([PacketMetadata::EMPTY; 4]);
 
-                static [<$socket:upper _TX_BUFFER>]: StaticCell<[u8; 1024]> = StaticCell::new();
-                let  [<$socket _tx_buffer>] =  [<$socket:upper _TX_BUFFER>].init( [0; 1024]);
+                static [<$socket:upper _TX_BUFFER>]: StaticCell<[u8; 512]> = StaticCell::new();
+                let  [<$socket _tx_buffer>] =  [<$socket:upper _TX_BUFFER>].init( [0; 512]);
 
                 static [<$socket:upper>]: StaticCell<UdpSocket> = StaticCell::new();
                 let $socket = [<$socket:upper>].init(UdpSocket::new(
@@ -839,9 +834,9 @@ async fn main(spawner: Spawner) {
     }
 
     make_uart_udp_socket!(uart_1_socket, 43114);
-    // make_uart_udp_socket!(uart_2_socket, 43115);
-    // make_uart_udp_socket!(uart_3_socket, 43116);
-    // make_uart_udp_socket!(uart_4_socket, 43117);
+    make_uart_udp_socket!(uart_2_socket, 43115);
+    make_uart_udp_socket!(uart_3_socket, 43116);
+    make_uart_udp_socket!(uart_4_socket, 43117);
 
     unwrap!(spawner.spawn(uart_bridge_1_task(
         uart_d1,
@@ -853,35 +848,35 @@ async fn main(spawner: Spawner) {
         43114
     )));
 
-    // unwrap!(spawner.spawn(uart_bridge_2_task(
-    //     uart_d2,
-    //     uart_r2,
-    //     data_2_receive_channel,
-    //     data_2_send_channel,
-    //     free_buffers,
-    //     uart_2_socket,
-    //     43115
-    // )));
+    unwrap!(spawner.spawn(uart_bridge_2_task(
+        uart_d2,
+        uart_r2,
+        data_2_receive_channel,
+        data_2_send_channel,
+        free_buffers,
+        uart_2_socket,
+        43115
+    )));
 
-    // unwrap!(spawner.spawn(uart_bridge_3_task(
-    //     uart_d3,
-    //     uart_r3,
-    //     data_3_receive_channel,
-    //     data_3_send_channel,
-    //     free_buffers,
-    //     uart_3_socket,
-    //     43116
-    // )));
+    unwrap!(spawner.spawn(uart_bridge_3_task(
+        uart_d3,
+        uart_r3,
+        data_3_receive_channel,
+        data_3_send_channel,
+        free_buffers,
+        uart_3_socket,
+        43116
+    )));
 
-    // unwrap!(spawner.spawn(uart_bridge_4_task(
-    //     uart_d4,
-    //     uart_r4,
-    //     data_4_receive_channel,
-    //     data_4_send_channel,
-    //     free_buffers,
-    //     uart_4_socket,
-    //     43117
-    // )));
+    unwrap!(spawner.spawn(uart_bridge_4_task(
+        uart_d4,
+        uart_r4,
+        data_4_receive_channel,
+        data_4_send_channel,
+        free_buffers,
+        uart_4_socket,
+        43117
+    )));
 
     info!("UARTs Configured");
 
