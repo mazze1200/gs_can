@@ -113,11 +113,12 @@ macro_rules! make_uart_bridge {
 
         let dr = async move {
             let remote_endpoint = (Ipv4Address::new(239, 74, 163, 2), $port);
+            let mut buf = [0u8;UART_BUFFER_SIZE];
 
             loop {
-                let buf = free_buffer_receiver.receive().await;
+                // let buf = free_buffer_receiver.receive().await;
 
-                if let Ok(count) = d_rx.read_until_idle(buf).await {
+                if let Ok(count) = d_rx.read_until_idle(&mut buf).await {
                     if count > 0 {
                         let _res = r_tx.write(&buf[..count]).await;
                         // data_receive_sender.send((buf, count)).await;
