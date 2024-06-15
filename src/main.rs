@@ -84,14 +84,9 @@ type UartRouted3 = Uart<'static, USART2, DMA1_CH0, DMA1_CH1>;
 type UartDevice4 = Uart<'static, UART4, DMA1_CH4, DMA1_CH5>;
 type UartRouted4 = Uart<'static, USART10, DMA2_CH6, DMA2_CH7>;
 
-const UART_BUFFER_SIZE: usize = 32;
-const UART_BUFFER_COUNT: usize = 32;
+const UART_BUFFER_SIZE: usize = 1024;
 const LOCAL_UART_BUFFER_COUNT: usize = 3;
 
-type UartDataBuffer =
-    Channel<ThreadModeRawMutex, (&'static mut [u8; UART_BUFFER_SIZE], usize), UART_BUFFER_COUNT>;
-type UartFreeBuffer =
-    Channel<ThreadModeRawMutex, &'static mut [u8; UART_BUFFER_SIZE], UART_BUFFER_COUNT>;
 
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<EthernetDevice>) -> ! {
@@ -118,6 +113,9 @@ macro_rules! make_uart_bridge {
         let uart_receiver = free_buffers.receiver();
         let free_buffer_sender = free_buffers.sender();
         let udp_receiver = free_buffers.receiver();
+        let udp_error_free_buffer_sender = free_buffers.sender();
+        let uart_free_buffer_sender = free_buffers.sender();
+
 
         static BUFFERS: StaticCell<[[u8; UART_BUFFER_SIZE]; LOCAL_UART_BUFFER_COUNT]> = StaticCell::new();
         let buffers = BUFFERS.init(array_init::array_init(|_| [0u8; UART_BUFFER_SIZE]));
@@ -141,25 +139,29 @@ macro_rules! make_uart_bridge {
 
         let rd = async move {
             let routed_data = pin!(stream::unfold(
-                (uart_receiver, r_rx),
-                |(free_buffer_receiver, mut r_rx)| async move {
-                    let buf = free_buffer_receiver.receive().await;
+                (uart_receiver, uart_free_buffer_sender,  r_rx),
+                |(free_buffer_receiver, error_buf_sender, mut r_rx)| async move {
                     loop {
+                        let buf = free_buffer_receiver.receive().await;
                         if let Ok(count) = r_rx.read_until_idle(buf).await {
                             if count > 0 {
-                                return Some(((buf, count), (free_buffer_receiver, r_rx)));
+                                return Some(((buf, count), (free_buffer_receiver, error_buf_sender, r_rx)));
                             }
+                        }else{
+                            error_buf_sender.send(buf).await;
                         }
                     }
                 }
             ));
 
-            let eth_data = pin!(stream::unfold($socket, |socket| async move {
+            let eth_data = pin!(stream::unfold(($socket, udp_error_free_buffer_sender), |(socket, buf_sender)| async move {
                 loop {
                     let buf = udp_receiver.receive().await;
 
                     if let Ok((size, _)) = $socket.recv_from(buf).await {
-                        return Some(((buf, size), socket));
+                        return Some(((buf, size), (socket, buf_sender)));
+                    }else{
+                        buf_sender.send(buf).await;
                     }
                 }
             }));
@@ -730,14 +732,14 @@ async fn main(spawner: Spawner) {
                 static [<$socket:upper _RX_META>]: StaticCell<[PacketMetadata; 4]> = StaticCell::new();
                 let [<$socket _rx_meta>] =  [<$socket:upper _RX_META>].init([PacketMetadata::EMPTY; 4]);
 
-                static [<$socket:upper _RX_BUFFER>]: StaticCell<[u8; 512]> = StaticCell::new();
-                let  [<$socket _rx_buffer>] =  [<$socket:upper _RX_BUFFER>].init( [0; 512]);
+                static [<$socket:upper _RX_BUFFER>]: StaticCell<[u8; UART_BUFFER_SIZE]> = StaticCell::new();
+                let  [<$socket _rx_buffer>] =  [<$socket:upper _RX_BUFFER>].init( [0; UART_BUFFER_SIZE]);
 
                 static [<$socket:upper _TX_META>]: StaticCell<[PacketMetadata; 4]> = StaticCell::new();
                 let [<$socket _tx_meta>] =  [<$socket:upper _TX_META>].init([PacketMetadata::EMPTY; 4]);
 
-                static [<$socket:upper _TX_BUFFER>]: StaticCell<[u8; 512]> = StaticCell::new();
-                let  [<$socket _tx_buffer>] =  [<$socket:upper _TX_BUFFER>].init( [0; 512]);
+                static [<$socket:upper _TX_BUFFER>]: StaticCell<[u8; UART_BUFFER_SIZE]> = StaticCell::new();
+                let  [<$socket _tx_buffer>] =  [<$socket:upper _TX_BUFFER>].init( [0; UART_BUFFER_SIZE]);
 
                 static [<$socket:upper>]: StaticCell<UdpSocket> = StaticCell::new();
                 let $socket = [<$socket:upper>].init(UdpSocket::new(
