@@ -475,8 +475,8 @@ async fn main(spawner: Spawner) {
 
     // let config = embassy_net::Config::dhcpv4(Default::default());
 
-    // let ip_address = Ipv4Address::new(192, 168, 250, 61);
-    let ip_address = Ipv4Address::new(192, 168, 16, 65);
+    let ip_address = Ipv4Address::new(192, 168, 250, 61);
+    // let ip_address = Ipv4Address::new(192, 168, 16, 65);
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
         address: Ipv4Cidr::new(ip_address, 24),
         dns_servers: heapless::Vec::new(),

@@ -38,6 +38,7 @@ cat single_eth_frame.bin | ncat -vu "192.168.16.65" 43113
 # Trace ETH 
 ```code
 socat UDP4-RECVFROM:43113,ip-add-membership=239.74.163.2:0.0.0.0,fork - |xxd
+socat STDIO UDP4-DATAGRAM:239.74.163.2:43114,bind=:43114,range=192.168.16.0/24,ip-add-membership=239.74.163.2:192.168.16.32
 ```
 
 # Reset the chip
